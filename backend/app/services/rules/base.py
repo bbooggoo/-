@@ -36,6 +36,10 @@ class RuleOutcome:
 
     message: str
     severity: RuleSeverity | None = None  # None이면 규칙의 default_severity 사용
+    # 규칙이 "무엇으로 고쳐야 하는지"까지 스스로 판단할 수 있을 때만 채운다
+    # (예: alias_correction 의 표준값 치환). 이 값이 있으면 "자동 제원 질의" 로,
+    # 없으면 "수동 제원 질의"(설계사 서술형)로 처리된다 - services/auto_query.py 참고.
+    suggested_value: str | None = None
 
 
 # 규칙 함수 시그니처: (RuleContext) -> RuleOutcome | None

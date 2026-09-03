@@ -2,12 +2,14 @@
 import datetime
 import re
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict
 
 from .models import (
     CorrectionSource,
+    OwnerRole,
     QAMessageRole,
     QAThreadStatus,
+    QueryType,
     RuleSeverity,
     SpecSheetStatus,
     ValidationResultStatus,
@@ -29,10 +31,19 @@ class MajorProcessOut(BaseModel):
     name: str
 
 
+class DisciplineOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    code: str
+    name: str
+
+
 class OwnerIn(BaseModel):
     name: str
     email: str | None = None
-    major_process_ids: list[int] = []
+    role: OwnerRole = OwnerRole.TECH_LEAD
+    major_process_ids: list[int] = []   # TECH_LEAD 용
+    discipline_ids: list[int] = []      # DESIGNER 용
 
 
 class OwnerOut(BaseModel):
@@ -40,7 +51,9 @@ class OwnerOut(BaseModel):
     id: int
     name: str
     email: str | None
+    role: OwnerRole
     major_processes: list[MajorProcessOut] = []
+    disciplines: list[DisciplineOut] = []
 
 
 class SpecFieldOut(BaseModel):
@@ -61,6 +74,7 @@ class ValidationResultOut(BaseModel):
     severity: RuleSeverity
     message: str
     status: ValidationResultStatus
+    suggested_value: str | None
     created_at: datetime.datetime
 
 
@@ -129,22 +143,59 @@ class QAMessageOut(BaseModel):
     created_at: datetime.datetime
 
 
+class QAThreadTargetOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    spec_field_id: int
+    validation_result_id: int | None
+    spec_field: SpecFieldOut
+    spec_sheet_id: int
+    construction_code: str
+
+
 class QAThreadCreateIn(BaseModel):
+    """수동(MANUAL) 제원 질의 등록. 설계사가 직접 서술형으로 질의한다."""
+
     title: str
-    spec_field_id: int | None = None
-    validation_result_id: int | None = None
+    discipline_id: int
+    spec_field_ids: list[int] = []          # 대상 항목(들). 자동 생성 화면에서 여러 개 선택 가능.
+    spec_field_id: int | None = None        # 하위호환: 단일 항목만 지정하는 경우
+    validation_result_id: int | None = None  # 특정 검증 이슈에서 바로 질의하는 경우
     assigned_owner_id: int | None = None
     question: str
     author_name: str = "익명"
 
 
+class QAThreadDecisionIn(BaseModel):
+    """승인/미승인(반려) 공용 입력. approve=false 면 미승인/반려."""
+
+    approve: bool
+    decided_by: str
+    note: str | None = None
+
+
+class QAThreadAnswerIn(BaseModel):
+    """기술팀의 서술형 답변 (MANUAL, 상태 OPEN 에서)."""
+
+    author_name: str
+    content: str
+
+
+class QAThreadProposeValueIn(BaseModel):
+    """기술팀이 검증 룰셋을 통과한 새 값을 제안 (MANUAL, 상태 ANSWER_APPROVED 에서)."""
+
+    proposed_by: str
+    new_value: str
+
+
 class QAThreadOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
-    spec_sheet_id: int
-    spec_field_id: int | None
-    validation_result_id: int | None
+    query_type: QueryType
     major_process: MajorProcessOut
+    discipline: DisciplineOut | None
+    field_name: str | None
+    to_be_value: str | None
     title: str
     status: QAThreadStatus
     assigned_owner: OwnerOut | None
@@ -152,12 +203,7 @@ class QAThreadOut(BaseModel):
     created_at: datetime.datetime
     updated_at: datetime.datetime
     messages: list[QAMessageOut] = []
-
-
-class QAThreadResolveIn(BaseModel):
-    resolver_name: str
-    new_value: str | None = None  # 값이 있으면 SpecField.value 갱신 + SpecCorrection 기록
-    note: str | None = None
+    targets: list[QAThreadTargetOut] = []
 
 
 class SpecCorrectionOut(BaseModel):
@@ -177,6 +223,17 @@ class CategoryAggregationOut(BaseModel):
     unit: str
     group_by: str
     totals: dict[str, float]
+    distinct_count: int = 0
+
+
+class SummaryOut(BaseModel):
+    sheet_count: int
+    open_issue_count: int
+    open_auto_query_count: int
+    open_manual_query_count: int
+    categories: list[CategoryAggregationOut]
+    gcs_material_count: int
+    gcs_materials: list[str]
 
 
 def validate_construction_code(value: str) -> str:

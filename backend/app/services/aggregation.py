@@ -40,6 +40,9 @@ class CategoryAggregation:
     unit: str
     group_by: str
     totals: dict[str, float] = field(default_factory=dict)
+    # 그룹(성상명/자재명 등) 종류의 개수. SPECIALITY GAS/폐액("GCS")은 이 종수 자체가
+    # 중요한 지표라 요청받아 추가함 - 다른 대분류에서도 부가 정보로 항상 채워둔다.
+    distinct_count: int = 0
 
 
 # 대분류(엑셀 1행 그대로의 표기, "WASTER WATER"/"폐액" 오탈자·한글도 원본 그대로) 별 집계 정의.
@@ -102,7 +105,59 @@ def compute_aggregation(spec_sheet) -> list[CategoryAggregation]:
 
         if totals:
             results.append(
-                CategoryAggregation(category=category, unit=spec["unit"], group_by=spec["group_by"], totals=totals)
+                CategoryAggregation(
+                    category=category, unit=spec["unit"], group_by=spec["group_by"],
+                    totals=totals, distinct_count=len(totals),
+                )
             )
 
     return results
+
+
+@dataclass
+class SummaryResult:
+    """여러 제원표(대공정/공종 단위 등)를 합친 요약 장표 - item 4, item 8(GCS 종수)."""
+
+    sheet_count: int = 0
+    open_issue_count: int = 0
+    categories: list[CategoryAggregation] = field(default_factory=list)
+    # "GCS" = SPECIALITY GAS + 폐액(CCSS) 을 합쳐 부르는 현장 용어. 종수(자재명 개수)가
+    # 핵심 지표라 두 대분류를 합쳐 중복 없이(같은 자재명이 양쪽에 있으면 1개로) 센다.
+    gcs_material_count: int = 0
+    gcs_materials: list[str] = field(default_factory=list)
+
+
+def compute_summary(spec_sheets: list) -> SummaryResult:
+    """여러 SpecSheet의 집계를 하나로 합친다 (같은 대분류/그룹키는 SUM, 종수는 재계산)."""
+    from ..models import GCS_CATEGORIES, ValidationResultStatus
+
+    merged: dict[str, dict] = {}  # category -> {unit, group_by, totals}
+    gcs_materials: set[str] = set()
+    open_issue_count = 0
+
+    for sheet in spec_sheets:
+        open_issue_count += sum(
+            1 for r in sheet.validation_results
+            if r.status not in (ValidationResultStatus.RESOLVED, ValidationResultStatus.DISMISSED)
+        )
+        for agg in compute_aggregation(sheet):
+            bucket = merged.setdefault(agg.category, {"unit": agg.unit, "group_by": agg.group_by, "totals": {}})
+            for key, value in agg.totals.items():
+                bucket["totals"][key] = bucket["totals"].get(key, 0.0) + value
+            if agg.category in GCS_CATEGORIES:
+                gcs_materials.update(agg.totals.keys())
+
+    categories = [
+        CategoryAggregation(
+            category=cat, unit=b["unit"], group_by=b["group_by"], totals=b["totals"], distinct_count=len(b["totals"])
+        )
+        for cat, b in merged.items()
+    ]
+
+    return SummaryResult(
+        sheet_count=len(spec_sheets),
+        open_issue_count=open_issue_count,
+        categories=categories,
+        gcs_material_count=len(gcs_materials),
+        gcs_materials=sorted(gcs_materials),
+    )

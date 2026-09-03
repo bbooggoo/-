@@ -73,14 +73,78 @@ class MajorProcess(Base):
 
 
 # ---------------------------------------------------------------------------
-# 담당자 (Owner) - 대공정별 담당자가 다르므로 M:N
+# 공종 (Discipline) - 설계사가 소속된 분야. 대공정과는 별개 축.
+# 자동/수동 질의를 이 축으로도 분류해서, 설계사가 자기 공종 질의만 관리할 수 있게 한다.
 # ---------------------------------------------------------------------------
+
+DISCIPLINE_SEED = [
+    ("PIPING", "공종배관"),
+    ("HVAC", "HVAC"),
+    ("UPW", "UPW"),
+    ("ELECTRIC", "전기"),
+    ("ARCH", "건축"),
+    ("SPECIALITY_GAS", "SPECIALITY GAS"),
+    ("CCSS", "CCSS"),
+]
+
+# 제원 대분류 -> 공종 자동 추론 매핑. 자동 질의를 생성할 때 이 표로 공종을 붙인다.
+# ※ 추정 매핑이라 실제 조직 구성과 다르면 이 표만 고치면 된다 (건축은 매칭되는
+#   대분류가 없어 자동 추론되지 않고, 수동 질의에서 설계사가 직접 선택하는 용도).
+CATEGORY_TO_DISCIPLINE_CODE = {
+    "GAS/AIR": "PIPING",
+    "WATER": "PIPING",
+    "WASTER WATER": "PIPING",
+    "EXHAUST": "HVAC",
+    "UPW": "UPW",
+    "POWER": "ELECTRIC",
+    "CHEMICAL": "CCSS",
+    "폐액": "CCSS",
+    "SPECIALITY GAS": "SPECIALITY_GAS",
+}
+
+# "GCS" = SPECIALITY GAS + CCSS(폐액) 를 묶어 부르는 현장 용어. 종수(자재명 개수)가
+# 중요한 지표라 요약/집계에서 이 두 대분류를 합쳐 별도로 센다.
+GCS_CATEGORIES = ("SPECIALITY GAS", "폐액")
+
+
+class Discipline(Base):
+    __tablename__ = "disciplines"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    code: Mapped[str] = mapped_column(String(32), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(64))
+
+    designers: Mapped[list["Owner"]] = relationship(
+        secondary="owner_disciplines", back_populates="disciplines"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 담당자/사용자 (Owner) - 역할 3종
+#   ADMIN      : 전체 데이터 열람 + 제원표 업로드는 관리자만 가능
+#   TECH_LEAD  : 대공정별 담당자, 질의에 답변/승인 (major_processes M:N)
+#   DESIGNER   : 공종별 설계사, 질의를 제기하고 답변/최종값을 승인 (disciplines M:N)
+# ---------------------------------------------------------------------------
+
+
+class OwnerRole(str, enum.Enum):
+    ADMIN = "ADMIN"
+    DESIGNER = "DESIGNER"
+    TECH_LEAD = "TECH_LEAD"
+
 
 owner_major_processes = Table(
     "owner_major_processes",
     Base.metadata,
     Column("owner_id", ForeignKey("owners.id"), primary_key=True),
     Column("major_process_id", ForeignKey("major_processes.id"), primary_key=True),
+)
+
+owner_disciplines = Table(
+    "owner_disciplines",
+    Base.metadata,
+    Column("owner_id", ForeignKey("owners.id"), primary_key=True),
+    Column("discipline_id", ForeignKey("disciplines.id"), primary_key=True),
 )
 
 
@@ -90,10 +154,14 @@ class Owner(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(64))
     email: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    role: Mapped[OwnerRole] = mapped_column(Enum(OwnerRole), default=OwnerRole.TECH_LEAD)
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=now)
 
     major_processes: Mapped[list["MajorProcess"]] = relationship(
         secondary=owner_major_processes, back_populates="owners"
+    )
+    disciplines: Mapped[list["Discipline"]] = relationship(
+        secondary=owner_disciplines, back_populates="designers"
     )
 
 
@@ -144,9 +212,10 @@ class SpecSheet(Base):
     validation_results: Mapped[list["ValidationResult"]] = relationship(
         back_populates="spec_sheet", cascade="all, delete-orphan"
     )
-    qa_threads: Mapped[list["QAThread"]] = relationship(
-        back_populates="spec_sheet", cascade="all, delete-orphan"
-    )
+    # QAThread는 이제 이 시트 하나에 속하지 않는다 (자동 질의는 여러 시트에 걸친 항목을
+    # 하나로 묶으므로). 이 시트를 건드리는 스레드가 필요하면
+    # QAThread.join(QAThreadTarget).join(SpecField).filter(spec_sheet_id=...) 로 조회한다
+    # (routers/qa.py의 list_threads_for_sheet 참고).
 
     __table_args__ = (
         UniqueConstraint(
@@ -236,6 +305,10 @@ class ValidationResult(Base):
     status: Mapped[ValidationResultStatus] = mapped_column(
         Enum(ValidationResultStatus), default=ValidationResultStatus.OPEN
     )
+    # 규칙이 명확한 교정 로직을 갖고 있어 대체값을 스스로 계산해낸 경우에만 채워진다
+    # (예: alias_correction 규칙). 이 값이 있는 건만 "자동 제원 질의" 일괄 생성 대상이 된다 -
+    # services/auto_query.py 참고.
+    suggested_value: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=now)
 
@@ -245,26 +318,55 @@ class ValidationResult(Base):
 
 
 # ---------------------------------------------------------------------------
-# 질의응답 (대공정별 담당자가 응답)
+# 질의응답 — 설계사가 질의하고 대공정별 기술팀 담당자가 답변/승인한다.
+#
+# 두 종류의 질의:
+#   AUTO   - 로직이 명확해 시스템이 AS-IS -> TO-BE(suggested_value)를 스스로 계산해서
+#            일괄 생성한다 (services/auto_query.py). 기술팀은 승인/미승인 한 번이면 끝.
+#            동일한 교정(같은 대공정 + 같은 규칙 + 같은 필드 + 같은 TO-BE)은 하나의
+#            QAThread 로 묶이고, 대상 SpecField 들은 QAThreadTarget 으로 여러 건 연결된다
+#            (그래야 수천 건짜리 반복 이슈가 질의 수천 개로 안 늘어난다).
+#   MANUAL - 로직이 없어 설계사가 서술형으로 직접 질의한다. 2단계 설계사 승인이 필요:
+#            (1) 기술팀의 서술형 답변을 설계사가 승인해야 기술팀이 실제 값을 고칠 수 있고,
+#            (2) 기술팀이 고친 값(검증 룰셋 통과 필수)을 설계사가 최종 승인해야 DB에 반영된다.
+#
+# 상태 전이:
+#   AUTO:   OPEN -> RESOLVED(승인, 즉시 DB 반영) | REJECTED(미승인)
+#   MANUAL: OPEN -> TECH_ANSWERED(기술팀 서술형 답변)
+#                -> ANSWER_APPROVED(설계사가 답변 승인, 반려하면 OPEN 으로 되돌아감)
+#                -> VALUE_PROPOSED(기술팀이 검증된 새 값 입력, 반려하면 ANSWER_APPROVED 로)
+#                -> RESOLVED(설계사 최종 승인, DB 반영) | REJECTED
 # ---------------------------------------------------------------------------
+
+
+class QueryType(str, enum.Enum):
+    AUTO = "AUTO"
+    MANUAL = "MANUAL"
 
 
 class QAThreadStatus(str, enum.Enum):
     OPEN = "OPEN"
-    ANSWERED = "ANSWERED"
+    TECH_ANSWERED = "TECH_ANSWERED"
+    ANSWER_APPROVED = "ANSWER_APPROVED"
+    VALUE_PROPOSED = "VALUE_PROPOSED"
     RESOLVED = "RESOLVED"
+    REJECTED = "REJECTED"
 
 
 class QAThread(Base):
     __tablename__ = "qa_threads"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    spec_sheet_id: Mapped[int] = mapped_column(ForeignKey("spec_sheets.id"))
-    spec_field_id: Mapped[int | None] = mapped_column(ForeignKey("spec_fields.id"), nullable=True)
-    validation_result_id: Mapped[int | None] = mapped_column(
-        ForeignKey("validation_results.id"), nullable=True
-    )
+
+    query_type: Mapped[QueryType] = mapped_column(Enum(QueryType), default=QueryType.MANUAL)
     major_process_id: Mapped[int] = mapped_column(ForeignKey("major_processes.id"))
+    discipline_id: Mapped[int | None] = mapped_column(ForeignKey("disciplines.id"), nullable=True)
+    rule_id: Mapped[int | None] = mapped_column(ForeignKey("validation_rules.id"), nullable=True)
+
+    # 배치 그룹의 대표 필드명 (예: "GAS/AIR_성상명") - 목록 표시/그룹핑 참고용.
+    field_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # 제안/확정 값. AUTO는 생성 시점부터, MANUAL은 기술팀이 propose-value 할 때 채워진다.
+    to_be_value: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     title: Mapped[str] = mapped_column(String(255))
     status: Mapped[QAThreadStatus] = mapped_column(Enum(QAThreadStatus), default=QAThreadStatus.OPEN)
@@ -274,14 +376,32 @@ class QAThread(Base):
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=now)
     updated_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=now, onupdate=now)
 
-    spec_sheet: Mapped["SpecSheet"] = relationship(back_populates="qa_threads")
-    spec_field: Mapped["SpecField | None"] = relationship()
-    validation_result: Mapped["ValidationResult | None"] = relationship()
     major_process: Mapped["MajorProcess"] = relationship()
+    discipline: Mapped["Discipline | None"] = relationship()
+    rule: Mapped["ValidationRule | None"] = relationship()
     assigned_owner: Mapped["Owner | None"] = relationship()
+    targets: Mapped[list["QAThreadTarget"]] = relationship(
+        back_populates="thread", cascade="all, delete-orphan"
+    )
     messages: Mapped[list["QAMessage"]] = relationship(
         back_populates="thread", cascade="all, delete-orphan", order_by="QAMessage.created_at"
     )
+
+
+class QAThreadTarget(Base):
+    """QAThread 1건이 가리키는 실제 제원 항목(들). 자동 질의는 동일한 교정이 여러 SpecField에
+    걸쳐 있을 수 있어 다대다처럼 여러 건이 달릴 수 있고, 수동 질의는 보통 1건이다."""
+
+    __tablename__ = "qa_thread_targets"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    qa_thread_id: Mapped[int] = mapped_column(ForeignKey("qa_threads.id"))
+    spec_field_id: Mapped[int] = mapped_column(ForeignKey("spec_fields.id"))
+    validation_result_id: Mapped[int | None] = mapped_column(ForeignKey("validation_results.id"), nullable=True)
+
+    thread: Mapped["QAThread"] = relationship(back_populates="targets")
+    spec_field: Mapped["SpecField"] = relationship()
+    validation_result: Mapped["ValidationResult | None"] = relationship()
 
 
 class QAMessageRole(str, enum.Enum):

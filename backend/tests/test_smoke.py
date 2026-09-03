@@ -14,36 +14,9 @@ test_grouped_upload_splits_by_construction_code: 건설코드가 다른 여러 �
 from io import BytesIO
 
 import pytest
-from fastapi.testclient import TestClient
 from openpyxl import Workbook
 
-
-@pytest.fixture()
-def raw_client(monkeypatch, tmp_path):
-    """앱 시작시 seed()가 심는 기본 검증 규칙이 그대로 남아있는 클라이언트."""
-    # 테스트마다 격리된 SQLite 파일 사용
-    db_path = tmp_path / "test.db"
-    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{db_path}")
-
-    # database 모듈이 환경변수를 import 시점에 읽으므로 매 테스트마다 재로딩
-    import sys
-
-    for mod in list(sys.modules):
-        if mod.startswith("app"):
-            del sys.modules[mod]
-
-    from app.main import app
-
-    with TestClient(app) as c:
-        yield c
-
-
-@pytest.fixture()
-def client(raw_client):
-    """기본 시드 규칙을 지워서, 각 테스트가 직접 등록한 규칙만으로 결정적으로 동작하게 한다."""
-    for rule in raw_client.get("/api/validation-rules").json():
-        raw_client.delete(f"/api/validation-rules/{rule['id']}")
-    return raw_client
+# raw_client / client fixture는 tests/conftest.py 참고 (다른 테스트 파일과 공유).
 
 
 def _make_grouped_excel(rows: list[dict]):
@@ -111,13 +84,17 @@ def test_end_to_end_flow(client):
     mps = client.get("/api/major-processes").json()
     assert len(mps) == 13
     cvd = next(m for m in mps if m["code"] == "CVD")
+    piping = next(d for d in client.get("/api/disciplines").json() if d["code"] == "PIPING")
 
     owner = client.post(
         "/api/owners",
-        json={"name": "김철수", "email": None, "major_process_ids": [cvd["id"]]},
+        json={"name": "김철수", "email": None, "role": "TECH_LEAD", "major_process_ids": [cvd["id"]]},
     ).json()
     outsider = client.post(
-        "/api/owners", json={"name": "박영희", "email": None, "major_process_ids": []}
+        "/api/owners", json={"name": "박영희", "email": None, "role": "TECH_LEAD", "major_process_ids": []}
+    ).json()
+    designer = client.post(
+        "/api/owners", json={"name": "정설계", "email": None, "role": "DESIGNER", "discipline_ids": [piping["id"]]}
     ).json()
 
     client.post(
@@ -176,12 +153,15 @@ def test_end_to_end_flow(client):
         f"/api/spec-sheets/{sheet_id}/qa-threads",
         json={
             "title": "유량 초과 확인",
+            "discipline_id": piping["id"],
             "spec_field_id": flow_issue["spec_field_id"],
             "validation_result_id": flow_issue["id"],
             "question": "150 LPM 맞습니까?",
-            "author_name": "검토자",
+            "author_name": "정설계",
         },
+        headers={"X-User-Id": str(designer["id"])},
     ).json()
+    assert thread["query_type"] == "MANUAL"
     assert thread["assigned_owner"]["id"] == owner["id"]  # 대공정 담당자 1명 -> 자동 배정
 
     # 담당자가 아닌 사용자는 답변 불가 (403)
@@ -194,15 +174,31 @@ def test_end_to_end_flow(client):
 
     ok = client.post(
         f"/api/qa-threads/{thread['id']}/messages",
-        json={"author_name": "김철수", "role": "ANSWER", "content": "오기입입니다."},
+        json={"author_name": "김철수", "role": "ANSWER", "content": "오기입입니다. 100이 맞습니다."},
         headers={"X-User-Id": str(owner["id"])},
     )
     assert ok.status_code == 200
+    assert ok.json()["status"] == "TECH_ANSWERED"
+
+    # 설계사가 답변 승인 -> 기술팀이 값 제안 가능
+    approved = client.post(
+        f"/api/qa-threads/{thread['id']}/answer-decision",
+        json={"approve": True, "decided_by": "정설계"},
+        headers={"X-User-Id": str(designer["id"])},
+    ).json()
+    assert approved["status"] == "ANSWER_APPROVED"
+
+    proposed = client.post(
+        f"/api/qa-threads/{thread['id']}/propose-value",
+        json={"proposed_by": "김철수", "new_value": "100"},
+        headers={"X-User-Id": str(owner["id"])},
+    ).json()
+    assert proposed["status"] == "VALUE_PROPOSED"
 
     resolved = client.post(
-        f"/api/qa-threads/{thread['id']}/resolve",
-        json={"resolver_name": "김철수", "new_value": "100"},
-        headers={"X-User-Id": str(owner["id"])},
+        f"/api/qa-threads/{thread['id']}/final-decision",
+        json={"approve": True, "decided_by": "정설계"},
+        headers={"X-User-Id": str(designer["id"])},
     ).json()
     assert resolved["status"] == "RESOLVED"
 

@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import api from "../api";
+import { useUser } from "../context/UserContext";
 
 export default function Upload() {
+  const { currentUser } = useUser();
   const [majorProcesses, setMajorProcesses] = useState([]);
   const [layout, setLayout] = useState("grouped");
 
@@ -90,6 +92,20 @@ export default function Upload() {
       setSubmitting(false);
     }
   };
+
+  if (currentUser?.role !== "ADMIN") {
+    return (
+      <div>
+        <h1>제원표 업로드</h1>
+        <div className="panel">
+          <p>
+            제원표 업로드는 <b>관리자</b>만 할 수 있습니다. 상단에서 관리자 계정을 선택해 주세요
+            {currentUser ? ` (현재: ${currentUser.name}, ${currentUser.role === "DESIGNER" ? "설계사" : "기술팀 담당자"})` : " (현재: 미선택)"}.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div>

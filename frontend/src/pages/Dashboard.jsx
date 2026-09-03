@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import api from "../api";
+import { useUser } from "../context/UserContext";
 
 const STATUS_LABEL = {
   UPLOADED: "업로드됨",
@@ -10,15 +11,26 @@ const STATUS_LABEL = {
 };
 
 export default function Dashboard() {
+  const { currentUser, majorProcesses } = useUser();
   const [sheets, setSheets] = useState([]);
-  const [majorProcesses, setMajorProcesses] = useState([]);
   const [filterMp, setFilterMp] = useState("");
   const [filterStatus, setFilterStatus] = useState("");
+  const [autoFiltered, setAutoFiltered] = useState(false);
   const [loading, setLoading] = useState(true);
 
+  // item 5 수정: 담당자(기술팀)가 바뀌면 대시보드도 그 담당자의 대공정으로 자동 필터링된다.
+  // 관리자/설계사/미선택이면 필터를 건드리지 않는다(관리자는 전체를 봐야 하니까).
   useEffect(() => {
-    api.get("/major-processes").then((res) => setMajorProcesses(res.data));
-  }, []);
+    if (currentUser?.role === "TECH_LEAD" && currentUser.major_processes.length === 1) {
+      setFilterMp(String(currentUser.major_processes[0].id));
+      setAutoFiltered(true);
+    } else if (autoFiltered) {
+      // 이전에 자동 필터링됐던 상태에서 다른(비-TECH_LEAD) 사용자로 바뀌면 필터를 풀어준다.
+      setFilterMp("");
+      setAutoFiltered(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser?.id]);
 
   const load = () => {
     setLoading(true);
@@ -36,12 +48,24 @@ export default function Dashboard() {
   return (
     <div>
       <h1>제원표 대시보드</h1>
+      {currentUser?.role === "TECH_LEAD" && autoFiltered && (
+        <p className="muted">
+          {currentUser.name} 님의 담당 대공정({currentUser.major_processes[0]?.name})으로 자동 필터링됨 —
+          아래에서 직접 바꿀 수 있습니다.
+        </p>
+      )}
 
       <div className="panel">
         <div className="form-row">
           <div className="field" style={{ marginBottom: 0 }}>
             <label>대공정 필터</label>
-            <select value={filterMp} onChange={(e) => setFilterMp(e.target.value)}>
+            <select
+              value={filterMp}
+              onChange={(e) => {
+                setFilterMp(e.target.value);
+                setAutoFiltered(false);
+              }}
+            >
               <option value="">전체</option>
               {majorProcesses.map((mp) => (
                 <option key={mp.id} value={mp.id}>

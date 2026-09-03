@@ -7,8 +7,10 @@ from sqlalchemy.orm import Session, selectinload
 
 from .. import schemas
 from ..database import get_db
+from ..deps import require_admin
 from ..models import (
     MajorProcess,
+    Owner,
     SpecField,
     SpecSheet,
     SpecSheetStatus,
@@ -183,10 +185,12 @@ async def upload_spec_sheet(
     value_col: int = Form(2),
     unit_col: int | None = Form(3),
     db: Session = Depends(get_db),
+    admin: Owner = Depends(require_admin),
 ):
     mp = db.get(MajorProcess, major_process_id)
     if mp is None:
         raise HTTPException(status_code=400, detail="존재하지 않는 대공정입니다.")
+    uploaded_by = uploaded_by or admin.name
 
     content = await file.read()
     created: list[SpecSheet] = []
@@ -313,7 +317,9 @@ def get_spec_sheet_aggregation(sheet_id: int, db: Session = Depends(get_db)):
     if sheet is None:
         raise HTTPException(status_code=404, detail="제원표를 찾을 수 없습니다.")
     return [
-        schemas.CategoryAggregationOut(category=a.category, unit=a.unit, group_by=a.group_by, totals=a.totals)
+        schemas.CategoryAggregationOut(
+            category=a.category, unit=a.unit, group_by=a.group_by, totals=a.totals, distinct_count=a.distinct_count
+        )
         for a in compute_aggregation(sheet)
     ]
 

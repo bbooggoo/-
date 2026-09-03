@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import api from "../api";
 import { useUser } from "../context/UserContext";
 
@@ -10,7 +10,14 @@ const STATUS_LABEL = {
   RESOLVED: "해결됨",
 };
 
-const QA_STATUS_LABEL = { OPEN: "미답변", ANSWERED: "답변완료(미해결)", RESOLVED: "해결됨" };
+const QA_STATUS_LABEL = {
+  OPEN: "미답변",
+  TECH_ANSWERED: "답변완료(설계사 검토 대기)",
+  ANSWER_APPROVED: "답변승인(값 수정 대기)",
+  VALUE_PROPOSED: "값 제안됨(최종승인 대기)",
+  RESOLVED: "해결됨",
+  REJECTED: "반려됨",
+};
 
 function buildGrid(fields) {
   let maxRow = 0;
@@ -26,11 +33,9 @@ function buildGrid(fields) {
 
 export default function SpecSheetDetail() {
   const { id } = useParams();
-  const { currentUser } = useUser();
   const [sheet, setSheet] = useState(null);
   const [threads, setThreads] = useState([]);
   const [aggregation, setAggregation] = useState([]);
-  const [activeThreadId, setActiveThreadId] = useState(null);
   const [modal, setModal] = useState(null); // { specFieldId, validationResultId, title }
   const [busy, setBusy] = useState(false);
 
@@ -53,11 +58,6 @@ export default function SpecSheetDetail() {
     if (!r.spec_field_id) return;
     const cur = flagByFieldId[r.spec_field_id];
     if (!cur || r.severity === "ERROR") flagByFieldId[r.spec_field_id] = r.severity;
-  });
-  const resultsByFieldId = {};
-  sheet.validation_results.forEach((r) => {
-    if (!r.spec_field_id) return;
-    (resultsByFieldId[r.spec_field_id] ||= []).push(r);
   });
 
   const runValidation = async () => {
@@ -157,7 +157,7 @@ export default function SpecSheetDetail() {
               aggregation.map((a) => (
                 <div key={a.category} style={{ marginBottom: 12 }}>
                   <div style={{ fontWeight: 600, fontSize: 13 }}>
-                    {a.category} <span className="muted">({a.group_by}별, {a.unit})</span>
+                    {a.category} <span className="muted">({a.group_by}별, {a.unit}, {a.distinct_count}종)</span>
                   </div>
                   <table>
                     <tbody>
@@ -188,6 +188,9 @@ export default function SpecSheetDetail() {
                     {r.status}
                   </span>
                   <div style={{ fontSize: 13, margin: "4px 0" }}>{r.message}</div>
+                  {r.suggested_value != null && (
+                    <div className="muted" style={{ fontSize: 12 }}>제안값: {r.suggested_value} (자동 질의 대상)</div>
+                  )}
                   {r.status !== "RESOLVED" && r.status !== "DISMISSED" && (
                     <button className="btn" onClick={() => openThreadModalForResult(r)}>
                       질문하기
@@ -200,15 +203,23 @@ export default function SpecSheetDetail() {
 
           <div className="panel">
             <h2>질의응답 스레드 ({threads.length}건)</h2>
+            <p className="muted" style={{ marginTop: 0 }}>
+              답변/승인 등 실제 처리는 <Link to="/queries">질의응답 관리</Link> 화면에서 진행합니다.
+            </p>
             {threads.length === 0 ? (
               <p className="muted">등록된 질의가 없습니다.</p>
             ) : (
               threads.map((t) => (
-                <div key={t.id} className="thread-card" onClick={() => setActiveThreadId(t.id)}>
-                  <span className={`badge qa-${t.status}`}>{QA_STATUS_LABEL[t.status]}</span>
+                <Link key={t.id} to={`/queries?thread=${t.id}`} className="thread-card" style={{ display: "block", textDecoration: "none", color: "inherit" }}>
+                  <span className={`badge qa-${t.status === "RESOLVED" || t.status === "REJECTED" ? "RESOLVED" : t.status === "OPEN" ? "OPEN" : "ANSWERED"}`}>
+                    {QA_STATUS_LABEL[t.status]}
+                  </span>{" "}
+                  <span className="badge" style={{ background: t.query_type === "AUTO" ? "#ddeeff" : "#f0f2f5" }}>
+                    {t.query_type === "AUTO" ? "자동" : "수동"}
+                  </span>
                   <div style={{ fontWeight: 600, fontSize: 13, margin: "4px 0" }}>{t.title}</div>
                   <div className="muted">담당자: {t.assigned_owner?.name || "미배정"}</div>
-                </div>
+                </Link>
               ))
             )}
           </div>
@@ -227,28 +238,26 @@ export default function SpecSheetDetail() {
           }}
         />
       )}
-
-      {activeThreadId && (
-        <ThreadDetailModal
-          threadId={activeThreadId}
-          currentUser={currentUser}
-          onClose={() => setActiveThreadId(null)}
-          onChanged={load}
-        />
-      )}
     </div>
   );
 }
 
 function ThreadCreateModal({ sheetId, majorProcessId, initial, onClose, onCreated }) {
-  const { owners, currentUser } = useUser();
+  const { owners, disciplines, currentUser } = useUser();
   const [title, setTitle] = useState(initial.title || "");
   const [question, setQuestion] = useState(initial.question || "");
+  const [disciplineId, setDisciplineId] = useState(
+    currentUser?.role === "DESIGNER" && currentUser.disciplines.length === 1
+      ? String(currentUser.disciplines[0].id)
+      : ""
+  );
   const [assignedOwnerId, setAssignedOwnerId] = useState("");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
-  const candidates = owners.filter((o) => o.major_processes.some((mp) => mp.id === majorProcessId));
+  const candidates = owners.filter(
+    (o) => o.role === "TECH_LEAD" && o.major_processes.some((mp) => mp.id === majorProcessId)
+  );
 
   const submit = async (e) => {
     e.preventDefault();
@@ -257,6 +266,7 @@ function ThreadCreateModal({ sheetId, majorProcessId, initial, onClose, onCreate
     try {
       await api.post(`/spec-sheets/${sheetId}/qa-threads`, {
         title,
+        discipline_id: Number(disciplineId),
         spec_field_id: initial.specFieldId,
         validation_result_id: initial.validationResultId,
         assigned_owner_id: assignedOwnerId || null,
@@ -274,18 +284,28 @@ function ThreadCreateModal({ sheetId, majorProcessId, initial, onClose, onCreate
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <h2>질의 등록</h2>
+        <h2>수동 질의 등록</h2>
+        <p className="muted">설계사가 직접 서술형으로 질의합니다. 기술팀 답변 → 설계사 승인 → 값 수정 → 최종 승인 순서로 처리됩니다.</p>
         <form onSubmit={submit}>
           <div className="field">
             <label>제목</label>
             <input value={title} onChange={(e) => setTitle(e.target.value)} required />
           </div>
           <div className="field">
+            <label>공종</label>
+            <select value={disciplineId} onChange={(e) => setDisciplineId(e.target.value)} required>
+              <option value="" disabled>선택하세요</option>
+              {disciplines.map((d) => (
+                <option key={d.id} value={d.id}>{d.name}</option>
+              ))}
+            </select>
+          </div>
+          <div className="field">
             <label>질문 내용</label>
             <textarea rows={4} value={question} onChange={(e) => setQuestion(e.target.value)} required />
           </div>
           <div className="field">
-            <label>담당자 지정 (선택 - 비우면 대공정 담당자 중 자동/미배정)</label>
+            <label>담당 기술팀 지정 (선택 - 비우면 대공정 담당자 중 자동/미배정)</label>
             <select value={assignedOwnerId} onChange={(e) => setAssignedOwnerId(e.target.value)}>
               <option value="">자동</option>
               {candidates.map((o) => (
@@ -305,122 +325,6 @@ function ThreadCreateModal({ sheetId, majorProcessId, initial, onClose, onCreate
             </button>
           </div>
         </form>
-      </div>
-    </div>
-  );
-}
-
-function ThreadDetailModal({ threadId, currentUser, onClose, onChanged }) {
-  const [thread, setThread] = useState(null);
-  const [content, setContent] = useState("");
-  const [newValue, setNewValue] = useState("");
-  const [note, setNote] = useState("");
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
-
-  const load = () => api.get(`/qa-threads/${threadId}`).then((res) => setThread(res.data));
-  useEffect(load, [threadId]);
-
-  if (!thread) return null;
-
-  const isAssignedOwner = currentUser && thread.assigned_owner && currentUser.id === thread.assigned_owner.id;
-
-  const sendMessage = async (e) => {
-    e.preventDefault();
-    setBusy(true);
-    setError("");
-    try {
-      await api.post(`/qa-threads/${threadId}/messages`, {
-        author_name: currentUser?.name || "익명",
-        role: isAssignedOwner ? "ANSWER" : "QUESTION",
-        content,
-      });
-      setContent("");
-      load();
-      onChanged();
-    } catch (err) {
-      setError(err.response?.data?.detail || "전송 실패");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const resolve = async (e) => {
-    e.preventDefault();
-    setBusy(true);
-    setError("");
-    try {
-      await api.post(`/qa-threads/${threadId}/resolve`, {
-        resolver_name: currentUser?.name || "익명",
-        new_value: newValue || null,
-        note: note || null,
-      });
-      load();
-      onChanged();
-    } catch (err) {
-      setError(err.response?.data?.detail || "해결 처리 실패");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal" style={{ width: 520 }} onClick={(e) => e.stopPropagation()}>
-        <h2>{thread.title}</h2>
-        <p className="muted">
-          담당자: {thread.assigned_owner?.name || "미배정"} · 상태: {QA_STATUS_LABEL[thread.status]}
-        </p>
-
-        <div style={{ maxHeight: 260, overflow: "auto", margin: "12px 0" }}>
-          {thread.messages.map((m) => (
-            <div key={m.id} className={`message role-${m.role}`}>
-              <div className="meta">
-                {m.author_name} · {m.role} · {new Date(m.created_at).toLocaleString()}
-              </div>
-              <div style={{ whiteSpace: "pre-wrap" }}>{m.content}</div>
-            </div>
-          ))}
-        </div>
-
-        {thread.status !== "RESOLVED" && (
-          <form onSubmit={sendMessage} className="field">
-            <label>{isAssignedOwner ? "답변 작성 (담당자)" : "추가 문의"}</label>
-            <textarea rows={3} value={content} onChange={(e) => setContent(e.target.value)} required />
-            <button className="btn primary" type="submit" disabled={busy} style={{ marginTop: 8 }}>
-              전송
-            </button>
-          </form>
-        )}
-
-        {thread.status !== "RESOLVED" && isAssignedOwner && (
-          <form onSubmit={resolve} className="panel" style={{ marginTop: 12 }}>
-            <h2>해결 처리</h2>
-            <div className="field">
-              <label>수정 값 (제원 반영, 선택)</label>
-              <input value={newValue} onChange={(e) => setNewValue(e.target.value)} placeholder="비우면 값 변경 없이 해결" />
-            </div>
-            <div className="field">
-              <label>메모 (선택)</label>
-              <input value={note} onChange={(e) => setNote(e.target.value)} />
-            </div>
-            <button className="btn primary" type="submit" disabled={busy}>
-              해결로 표시
-            </button>
-          </form>
-        )}
-
-        {thread.status !== "RESOLVED" && !isAssignedOwner && (
-          <p className="muted">
-            이 대공정 담당자만 답변/해결 처리를 할 수 있습니다. 상단에서 담당자를 선택해 주세요.
-          </p>
-        )}
-
-        {error && <p className="error-text">{error}</p>}
-
-        <button className="btn" onClick={onClose} style={{ marginTop: 12 }}>
-          닫기
-        </button>
       </div>
     </div>
   );

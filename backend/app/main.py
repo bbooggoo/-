@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .routers import corrections, major_processes, owners, qa, spec_sheets, validation
+from .routers import corrections, disciplines, major_processes, owners, qa, spec_sheets, summary, validation
 from .seed import seed
 
 
@@ -24,11 +24,13 @@ app.add_middleware(
 )
 
 app.include_router(major_processes.router)
+app.include_router(disciplines.router)
 app.include_router(owners.router)
 app.include_router(spec_sheets.router)
 app.include_router(validation.router)
 app.include_router(qa.router)
 app.include_router(corrections.router)
+app.include_router(summary.router)
 
 
 @app.get("/api/health")

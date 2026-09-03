@@ -20,5 +20,6 @@ from .base import RULE_REGISTRY, RuleContext, RuleOutcome, register  # noqa: F40
 from . import max_value_rule  # noqa: F401,E402
 from . import max_value_by_group_rule  # noqa: F401,E402
 from . import standardized_enum_rule  # noqa: F401,E402
+from . import alias_correction_rule  # noqa: F401,E402
 
 __all__ = ["RULE_REGISTRY", "RuleContext", "RuleOutcome", "register"]

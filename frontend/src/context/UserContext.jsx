@@ -5,6 +5,8 @@ const UserContext = createContext(null);
 
 export function UserProvider({ children }) {
   const [owners, setOwners] = useState([]);
+  const [majorProcesses, setMajorProcesses] = useState([]);
+  const [disciplines, setDisciplines] = useState([]);
   const [currentUserId, setCurrentUserIdState] = useState(
     localStorage.getItem("currentUserId") || ""
   );
@@ -15,6 +17,8 @@ export function UserProvider({ children }) {
 
   useEffect(() => {
     refreshOwners();
+    api.get("/major-processes").then((res) => setMajorProcesses(res.data));
+    api.get("/disciplines").then((res) => setDisciplines(res.data));
   }, []);
 
   const setCurrentUserId = (id) => {
@@ -30,7 +34,15 @@ export function UserProvider({ children }) {
 
   return (
     <UserContext.Provider
-      value={{ owners, refreshOwners, currentUserId, setCurrentUserId, currentUser }}
+      value={{
+        owners,
+        refreshOwners,
+        majorProcesses,
+        disciplines,
+        currentUserId,
+        setCurrentUserId,
+        currentUser,
+      }}
     >
       {children}
     </UserContext.Provider>
