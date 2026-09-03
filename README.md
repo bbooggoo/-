@@ -13,7 +13,8 @@
 | 단계 | 내용 | 상태 |
 |---|---|---|
 | 1 | 엑셀 제원표 업로드/보존, 대공정·건설코드·설비모듈 분류 | ✅ 구현 |
-| 1 | 규칙 기반 자동 검증 (플러그인 엔진) | ✅ 뼈대 구현 (예시 규칙 2종) |
+| 1 | 규칙 기반 자동 검증 (플러그인 엔진) | ✅ 구현 (성상별 유량 OVER 규칙 포함, 기본 규칙 자동 시드) |
+| 1 | 대분류별 제원 총량 집계 | ✅ 구현 (POWER/WATER/UPW/CHEMICAL/GAS·AIR/SPECIALITY GAS/폐액/WASTE WATER/EXHAUST) |
 | 1 | 대공정별 담당자 배정 + 질의응답(Q&A) | ✅ 구현 |
 | 1 | Q&A로 반영된 수정 이력 축적 | ✅ 구현 (`SpecCorrection` 테이블) |
 | 2 | Q&A 이력 기반 **자동 제원 수정 제안/반영** | 🔜 데이터만 축적 중 (모델/로직 없음) |
@@ -49,15 +50,58 @@
 이 구조가 대공정마다 다르거나 예외가 있다면(예: 헤더가 3행 이상, 열 순서가 다름) 같은 파일 안에서
 `GroupedImportConfig`의 행 번호만 조정하면 되고, 완전히 다른 형식이면 이 함수만 교체하면 됩니다.
 
-## 아직 안 받은 것 → 확장 포인트로 설계
+## 검증 규칙 (플러그인 엔진)
 
-**제원 검증 로직**: `backend/app/services/rules/`
-   - `base.py`의 `@register("규칙타입키")` 데코레이터로 규칙 함수를 등록하는 플러그인 구조입니다.
-   - 지금은 예시로 `max_value_rule.py`(수치 상한/하한, "유량값 OVER" 대응), `standardized_enum_rule.py`
-     (허용값 목록 검증, "성상값 표준화" 대응) 두 개만 있습니다.
-   - 실제 로직을 받으면 같은 패턴으로 새 파일을 추가하고 `rules/__init__.py`에 import만 추가하면,
-     화면의 "검증 규칙" 메뉴에서 대공정/설비모듈/필드명 패턴별로 바로 등록해서 쓸 수 있습니다.
-   - 규칙은 DB에 저장되므로 재배포 없이 대공정별로 다르게 운영할 수 있습니다.
+`backend/app/services/rules/`: `base.py`의 `@register("규칙타입키")` 데코레이터로 규칙 함수를
+등록하는 구조입니다. 규칙은 DB(`ValidationRule`)에 저장되므로 재배포 없이 대공정/설비모듈별로
+다르게 운영할 수 있고, 화면의 "검증 규칙"(`/rules`) 메뉴에서 등록·수정·삭제합니다.
+
+- `max_value_rule.py` — 수치 상한/하한 (전역 단일 기준)
+- `standardized_enum_rule.py` — 허용값 목록 검증 (예: 성상값 표준화)
+- `max_value_by_group_rule.py` — **성상(가스 종류)별로 다른 상한값**을 적용하는 유량 OVER 검사.
+  "유량 OVER 기준이 성상마다 다르다(N2 10 SLPM, O2 6 SLPM, Ar 12 SLPM 등)"는 요청에 맞춰 추가했습니다.
+  검사 대상 필드(`GAS/AIR_유량`)와 같은 행의 `GAS/AIR_성상명` 값을 찾아(`RuleContext.sibling()`)
+  그 값에 해당하는 기준을 적용합니다. `params.thresholds`에 성상별 기준을 딕셔너리로 지정합니다.
+
+`app/seed.py`의 `DEFAULT_VALIDATION_RULES`에 기본값(N2=10, O2=6, Ar=12, CDA=15, He=8, H2=6 SLPM)을
+넣어뒀습니다 — DB가 완전히 비어있는 최초 실행 시에만 자동으로 심어지고, 이후로는 화면에서 자유롭게
+수정/삭제할 수 있습니다. **실제 기준값은 이 예시일 뿐이니 확정된 값으로 교체해 주세요.**
+
+실제 검증 로직을 더 받으면 같은 패턴으로 새 파일을 추가하고 `rules/__init__.py`에 import만
+추가하면 됩니다.
+
+## 제원 총량 집계
+
+`backend/app/services/aggregation.py`: 업로드된 제원표(건설코드 1건) 안에서 대분류(성상군)별로
+아래 로직에 따라 총량을 계산합니다. 대분류+행(row_index) 하나를 아이템 한 건으로 보고, 아이템의
+그룹 필드(성상명/전원종류/자재명)로 묶어서 합산합니다.
+
+| 대분류 | 그룹 기준 | 계산식 | 단위 |
+|---|---|---|---|
+| POWER | 전원종류 | SUM(전력값) | KW |
+| WATER | 성상명 | SUM(유량 × 배관수량) | SLPM |
+| WASTE WATER | 성상명 | SUM(유량 × 배관수량) | SLPM |
+| UPW | 성상명 | SUM(실사용량) | TON/DAY |
+| CHEMICAL | 자재명(없으면 성상명) | SUM(실사용량) | LITER/DAY |
+| GAS/AIR | 성상명 | SUM(배관수량 × 유량) | SLPM |
+| SPECIALITY GAS | 자재명 | SUM(배관수량) | EA |
+| 폐액 | 자재명 | SUM(실사용량) | TON/DAY |
+| EXHAUST | 성상명 | SUM(포트 수량 × 풍량) | CMM |
+
+`GET /api/spec-sheets/{id}/aggregation`으로 조회하고, 제원표 상세 화면(`/spec-sheets/:id`)의
+"제원 총량 집계" 패널에 표시됩니다. 실제 헤더 샘플에서 한 대분류 안에 같은 라벨(예: GAS/AIR의
+"배관수량")이 두 열 존재하는 경우가 있어, 같은 행·같은 라벨 값은 모두 더한 뒤 계산에 사용합니다.
+
+## 데모 데이터
+
+`backend/scripts/generate_demo_data.py`가 그럴듯한 값(건설코드 2건, 9개 대분류, 가스 여러 종류)을
+채운 데모 엑셀을 생성합니다. 일부러 유량 OVER(O2 8 SLPM > 기준 6)와 성상값 미표준화("질소")
+이슈를 심어놔서, 업로드하면 기본 검증 규칙이 실제로 잡아내는 걸 볼 수 있습니다.
+
+```bash
+cd backend && source .venv/bin/activate
+python -m scripts.generate_demo_data demo.xlsx
+```
 
 ## 데이터 모델 개요
 

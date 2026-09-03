@@ -29,6 +29,7 @@ export default function SpecSheetDetail() {
   const { currentUser } = useUser();
   const [sheet, setSheet] = useState(null);
   const [threads, setThreads] = useState([]);
+  const [aggregation, setAggregation] = useState([]);
   const [activeThreadId, setActiveThreadId] = useState(null);
   const [modal, setModal] = useState(null); // { specFieldId, validationResultId, title }
   const [busy, setBusy] = useState(false);
@@ -36,6 +37,7 @@ export default function SpecSheetDetail() {
   const load = () => {
     api.get(`/spec-sheets/${id}`).then((res) => setSheet(res.data));
     api.get(`/spec-sheets/${id}/qa-threads`).then((res) => setThreads(res.data));
+    api.get(`/spec-sheets/${id}/aggregation`).then((res) => setAggregation(res.data));
   };
 
   useEffect(load, [id]);
@@ -147,6 +149,33 @@ export default function SpecSheetDetail() {
         </div>
 
         <div>
+          <div className="panel">
+            <h2>제원 총량 집계</h2>
+            {aggregation.length === 0 ? (
+              <p className="muted">집계할 데이터가 없습니다 (대분류별 성상/전원종류/자재명이 채워진 항목이 필요).</p>
+            ) : (
+              aggregation.map((a) => (
+                <div key={a.category} style={{ marginBottom: 12 }}>
+                  <div style={{ fontWeight: 600, fontSize: 13 }}>
+                    {a.category} <span className="muted">({a.group_by}별, {a.unit})</span>
+                  </div>
+                  <table>
+                    <tbody>
+                      {Object.entries(a.totals).map(([group, total]) => (
+                        <tr key={group}>
+                          <td>{group}</td>
+                          <td style={{ textAlign: "right", fontWeight: 600 }}>
+                            {total.toLocaleString(undefined, { maximumFractionDigits: 2 })} {a.unit}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ))
+            )}
+          </div>
+
           <div className="panel">
             <h2>검증 결과 ({openResults.length}건 미해결)</h2>
             {sheet.validation_results.length === 0 ? (

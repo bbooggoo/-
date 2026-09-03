@@ -1,5 +1,5 @@
 """검증 규칙 플러그인의 공통 타입 정의."""
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable, Optional
 
 from ...models import RuleSeverity, SpecField
@@ -12,6 +12,22 @@ class RuleContext:
     spec_field: SpecField
     params: dict
     default_severity: RuleSeverity
+
+    # 같은 행(row_index)에 있는 다른 필드들의 {field_name: value} 맵.
+    # 예: "GAS/AIR_유량" 셀을 검사할 때 같은 행의 "GAS/AIR_성상명" 값을 참조해서
+    # 성상(가스 종류)별로 다른 기준값을 적용하는 규칙(max_value_by_group)에 쓰인다.
+    siblings: dict[str, str] = field(default_factory=dict)
+
+    def sibling(self, base_label: str) -> str | None:
+        """현재 필드와 같은 대분류 접두어를 쓰는 형제 필드 값을 찾는다.
+
+        현재 필드명이 "GAS/AIR_유량" 이면 "GAS/AIR_성상명" 을 찾고, 대분류 접두어가
+        없는 공통 필드(예: "건설코드")면 base_label 그대로 찾는다.
+        """
+        field_name = self.spec_field.field_name or ""
+        category = field_name.rsplit("_", 1)[0] if "_" in field_name else ""
+        key = f"{category}_{base_label}" if category else base_label
+        return self.siblings.get(key)
 
 
 @dataclass

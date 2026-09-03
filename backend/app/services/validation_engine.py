@@ -47,6 +47,14 @@ def run_validation(db: Session, spec_sheet: SpecSheet) -> list[ValidationResult]
         or (spec_sheet.equipment_module and r.equipment_module.strip().upper() in spec_sheet.equipment_module.upper())
     ]
 
+    # 행(row_index)별 {field_name: value} 맵 - 같은 행의 다른 항목(예: 성상명)을
+    # 참조해야 하는 규칙(max_value_by_group 등)을 위해 미리 만들어둔다.
+    rows_by_index: dict[int, dict[str, str]] = {}
+    for f in spec_sheet.fields:
+        if not f.field_name:
+            continue
+        rows_by_index.setdefault(f.row_index, {})[f.field_name] = f.value or ""
+
     created: list[ValidationResult] = []
 
     for rule in rules:
@@ -64,7 +72,12 @@ def run_validation(db: Session, spec_sheet: SpecSheet) -> list[ValidationResult]
                 continue
 
             outcome = fn(
-                RuleContext(spec_field=field, params=rule.params or {}, default_severity=rule.severity)
+                RuleContext(
+                    spec_field=field,
+                    params=rule.params or {},
+                    default_severity=rule.severity,
+                    siblings=rows_by_index.get(field.row_index, {}),
+                )
             )
             if outcome is None:
                 continue

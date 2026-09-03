@@ -18,6 +18,7 @@ from .base import RULE_REGISTRY, RuleContext, RuleOutcome, register  # noqa: F40
 
 # 예시 규칙들 (실제 로직 확정 전까지의 참고 구현) -----------------------------
 from . import max_value_rule  # noqa: F401,E402
+from . import max_value_by_group_rule  # noqa: F401,E402
 from . import standardized_enum_rule  # noqa: F401,E402
 
 __all__ = ["RULE_REGISTRY", "RuleContext", "RuleOutcome", "register"]

@@ -169,6 +169,13 @@ class SpecCorrectionOut(BaseModel):
     applied_at: datetime.datetime
 
 
+class CategoryAggregationOut(BaseModel):
+    category: str
+    unit: str
+    group_by: str
+    totals: dict[str, float]
+
+
 def validate_construction_code(value: str) -> str:
     if not CONSTRUCTION_CODE_REGEX.match(value):
         raise ValueError(

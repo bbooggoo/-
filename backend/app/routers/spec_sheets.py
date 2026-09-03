@@ -15,6 +15,7 @@ from ..models import (
     ValidationResultStatus,
 )
 from ..schemas import validate_construction_code
+from ..services.aggregation import compute_aggregation
 from ..services.excel_export import export_spec_sheet
 from ..services.excel_import import (
     GroupedImportConfig,
@@ -266,6 +267,17 @@ def validate_spec_sheet(sheet_id: int, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(sheet)
     return _to_detail_out(sheet)
+
+
+@router.get("/{sheet_id}/aggregation", response_model=list[schemas.CategoryAggregationOut])
+def get_spec_sheet_aggregation(sheet_id: int, db: Session = Depends(get_db)):
+    sheet = db.get(SpecSheet, sheet_id)
+    if sheet is None:
+        raise HTTPException(status_code=404, detail="제원표를 찾을 수 없습니다.")
+    return [
+        schemas.CategoryAggregationOut(category=a.category, unit=a.unit, group_by=a.group_by, totals=a.totals)
+        for a in compute_aggregation(sheet)
+    ]
 
 
 @router.get("/{sheet_id}/export")
