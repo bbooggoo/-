@@ -244,6 +244,30 @@ def test_grouped_upload_splits_by_construction_code(client):
     assert values == ["30", "40"]  # carry-down된 세 번째 행도 PD000002 그룹에 포함됨
 
 
+def test_construction_code_allows_main_sub_equipment_suffix(client):
+    """MAIN 설비 + 부대설비가 같은 건설코드를 -01/-02 접미사로 나눠 쓰는 실제 관례를 지원하는지 확인.
+    이 경우 건설코드 형식 경고 없이(유효한 패턴으로 인식) 접미사별로 별도 제원표가 생성돼야 한다."""
+    mps = client.get("/api/major-processes").json()
+    cvd = next(m for m in mps if m["code"] == "CVD")
+
+    excel = _make_grouped_excel(
+        [
+            {"위치": "평택", "라인": "P4", "건설코드": "PD000102-01", "유량": 7, "성상명": "AR"},
+            {"위치": "평택", "라인": "P4", "건설코드": "PD000102-02", "유량": 5, "성상명": "H2"},
+        ]
+    )
+    res = client.post(
+        "/api/spec-sheets/upload",
+        data={"major_process_id": cvd["id"]},
+        files={"file": ("spec.xlsx", excel, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["warnings"] == []  # 접미사가 있어도 형식 경고가 없어야 함
+    codes = sorted(s["construction_code"] for s in body["created"])
+    assert codes == ["PD000102-01", "PD000102-02"]
+
+
 def test_ungrouped_rows_without_construction_code_are_reported(client):
     mps = client.get("/api/major-processes").json()
     cvd = next(m for m in mps if m["code"] == "CVD")

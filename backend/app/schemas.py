@@ -13,10 +13,13 @@ from .models import (
     ValidationResultStatus,
 )
 
-# 건설코드 형식: P 로 시작하는 8자리 영숫자.
+# 건설코드 형식: P 로 시작하는 8자리 영숫자, 뒤에 "-01" 같은 2자리 일련번호가 붙을 수 있다.
+# MAIN 설비 + 거기 붙는 부대설비들이 같은 건설코드를 공유하면서 각자 별도 항목(따라서 별도
+# 제원표)으로 추적돼야 해서, 실제로는 PD000102-01(MAIN)/-02/-03(부대설비) 처럼 일련번호가 붙어
+# 반복된다. 접미사가 없는 순수 8자리 코드도 계속 허용한다 (하위 호환).
 # ※ 예시로 받은 "PDXXXXX" 표기와 "8글자" 설명이 정확히 일치하지 않아, 우선 8자리로 구현.
 #   실제 규칙 확정되면 이 정규식 한 곳만 수정하면 됨.
-CONSTRUCTION_CODE_REGEX = re.compile(r"^P[A-Za-z0-9]{7}$")
+CONSTRUCTION_CODE_REGEX = re.compile(r"^P[A-Za-z0-9]{7}(-\d{2})?$")
 
 
 class MajorProcessOut(BaseModel):
@@ -179,6 +182,7 @@ class CategoryAggregationOut(BaseModel):
 def validate_construction_code(value: str) -> str:
     if not CONSTRUCTION_CODE_REGEX.match(value):
         raise ValueError(
-            "건설코드는 'P'로 시작하는 8자리 영숫자여야 합니다. 예: PD000001"
+            "건설코드는 'P'로 시작하는 8자리 영숫자여야 합니다 (뒤에 '-01' 같은 2자리 일련번호는 선택). "
+            "예: PD000001 또는 PD000001-01"
         )
     return value

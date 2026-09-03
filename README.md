@@ -94,9 +94,24 @@
 
 ## 데모 데이터
 
-`backend/scripts/generate_demo_data.py`가 그럴듯한 값(건설코드 2건, 9개 대분류, 가스 여러 종류)을
-채운 데모 엑셀을 생성합니다. 일부러 유량 OVER(O2 8 SLPM > 기준 6)와 성상값 미표준화("질소")
-이슈를 심어놔서, 업로드하면 기본 검증 규칙이 실제로 잡아내는 걸 볼 수 있습니다.
+`backend/scripts/generate_demo_data.py`가 그럴듯한 값을 채운 데모 엑셀을 생성합니다. 실제 현장
+관례를 반영해 다음 규칙을 따릅니다:
+
+- UTILITY의 설비대수는 항상 1
+- MAIN 설비와 거기 붙는 부대설비는 같은 "가족"이지만 서로 다른 건설코드를 씀 — 예:
+  `PD000102-01`(MAIN) / `PD000102-02`, `PD000102-03`(부대설비)처럼 접미사로 구분되고,
+  건설코드 1개당 제원표 1건이 생성되므로 이 파일은 총 5개 제원표로 나뉨
+  (`PD000101-01/-02`, `PD000102-01/-02/-03`)
+- 성상명/자재명은 전부 영어 표기 (예: N2, PCW, HOT DI, ACID WASTE, SULFURIC ACID). 단 "GN2"처럼
+  영어이지만 표준 성상명 목록에는 없는 값을 하나 섞어 표준화 검증(WARN)이 잡아내는 걸 보여줌
+- 전원종류는 NOR(상용전원)/UPS(무정전전원) 두 가지만 사용
+- EXHAUST의 성상명은 PFC/DE-PFC/ACID/ALKALI/GDM/HEAT-GEN/RECOVERY 중에서만 사용
+- 한 번 작성된 행은 UTILITY 칸(위치/라인/층/건설코드/설비대수)을 전부 채움 (carry-down으로
+  빈칸을 남기지 않음)
+
+일부러 유량 OVER(O2 8 SLPM > 기준 6)와 성상값 미표준화(GN2) 이슈를 심어놔서, 업로드하면 기본
+검증 규칙이 실제로 잡아내는 걸 볼 수 있습니다. 건설코드에 `-01` 같은 2자리 접미사가 붙을 수 있다는
+점은 `CONSTRUCTION_CODE_REGEX`(`backend/app/schemas.py`)에도 반영했습니다.
 
 ```bash
 cd backend && source .venv/bin/activate
@@ -174,6 +189,11 @@ npm run dev
 - **수정 이력** (`/corrections`): Q&A로 반영된 수정 이력 (2단계 자동화의 데이터 소스)
 
 REST API 전체 목록은 백엔드 실행 후 `http://localhost:8000/docs` (Swagger UI)에서 확인할 수 있습니다.
+
+## 클라우드 데모
+
+`demo/` 폴더에 이 백엔드와 같은 검증·집계 로직을 브라우저에서 재현한 단일 HTML 데모(Claude
+Artifact로 배포됨)의 소스를 보관합니다. 자세한 내용과 링크는 `demo/README.md` 참고.
 
 ## 다음 단계 제안
 
