@@ -9,6 +9,7 @@ export default function Upload() {
   const [grouped, setGrouped] = useState({
     major_process_id: "",
     uploaded_by: "",
+    sheet_name: "",
     category_row: 1,
     label_row: 2,
     data_start_row: 3,
@@ -18,6 +19,7 @@ export default function Upload() {
   const [simple, setSimple] = useState({
     major_process_id: "",
     uploaded_by: "",
+    sheet_name: "",
     title: "",
     construction_code: "",
     equipment_module: "",
@@ -36,8 +38,8 @@ export default function Upload() {
     api.get("/major-processes").then((res) => {
       setMajorProcesses(res.data);
       if (res.data.length) {
-        setGrouped((f) => ({ ...f, major_process_id: res.data[0].id }));
-        setSimple((f) => ({ ...f, major_process_id: res.data[0].id }));
+        setGrouped((f) => ({ ...f, major_process_id: res.data[0].id, sheet_name: res.data[0].name }));
+        setSimple((f) => ({ ...f, major_process_id: res.data[0].id, sheet_name: res.data[0].name }));
       }
     });
   }, []);
@@ -45,6 +47,20 @@ export default function Upload() {
   const form = layout === "grouped" ? grouped : simple;
   const setForm = layout === "grouped" ? setGrouped : setSimple;
   const update = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
+
+  // 대공정을 바꾸면 시트 이름도 같이 맞춰준다 (실제 파일은 보통 대공정 이름 = 탭 이름이라서).
+  // 사용자가 시트 이름을 직접 건드리지 않은 경우에만 자동으로 채운다.
+  const updateMajorProcess = (e) => {
+    const id = e.target.value;
+    const mp = majorProcesses.find((m) => String(m.id) === String(id));
+    setForm((f) => ({
+      ...f,
+      major_process_id: id,
+      sheet_name: !f.sheet_name || f.sheet_name === majorProcesses.find((m) => String(m.id) === String(f.major_process_id))?.name
+        ? mp?.name || f.sheet_name
+        : f.sheet_name,
+    }));
+  };
 
   const submit = async (e) => {
     e.preventDefault();
@@ -80,13 +96,21 @@ export default function Upload() {
           <div className="form-row">
             <div className="field">
               <label>대공정</label>
-              <select value={form.major_process_id} onChange={update("major_process_id")} required>
+              <select value={form.major_process_id} onChange={updateMajorProcess} required>
                 {majorProcesses.map((mp) => (
                   <option key={mp.id} value={mp.id}>
                     {mp.name}
                   </option>
                 ))}
               </select>
+            </div>
+            <div className="field">
+              <label>시트(탭) 이름</label>
+              <input
+                value={form.sheet_name}
+                onChange={update("sheet_name")}
+                placeholder="비워두면 첫 번째 시트"
+              />
             </div>
             <div className="field">
               <label>업로더</label>
@@ -100,6 +124,10 @@ export default function Upload() {
               </select>
             </div>
           </div>
+          <p className="muted" style={{ marginTop: 8 }}>
+            대공정별로 시트(탭)가 따로 있는 파일이라면, 탭 이름을 대공정 이름과 맞춰두면 여기서
+            자동으로 채워집니다. 다르면 직접 입력해 주세요.
+          </p>
         </div>
 
         {layout === "grouped" ? (
