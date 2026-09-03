@@ -35,12 +35,16 @@ def run_validation(db: Session, spec_sheet: SpecSheet) -> list[ValidationResult]
         )
         .all()
     )
-    # equipment_module 매칭은 대소문자 무시 부분 문자열로 처리
+    # equipment_module 매칭은 대소문자 무시 부분 문자열로 처리.
+    # SpecSheet.equipment_module 은 이제 참고용 요약 문자열(비어있을 수 있음)이라,
+    # 특정 설비모듈을 조건으로 거는 규칙은 이 요약에 해당 문자열이 없으면 건너뛴다.
+    # (설비모듈별로 더 정밀하게 걸고 싶다면 field_name_pattern 에 대분류를 포함시키면 된다,
+    #  예: "GAS/AIR_유량")
     rules = [
         r
         for r in rules
         if not r.equipment_module
-        or r.equipment_module.strip().upper() in spec_sheet.equipment_module.upper()
+        or (spec_sheet.equipment_module and r.equipment_module.strip().upper() in spec_sheet.equipment_module.upper())
     ]
 
     created: list[ValidationResult] = []

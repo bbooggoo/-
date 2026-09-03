@@ -94,8 +94,9 @@ export default function SpecSheetDetail() {
         <span className={`badge status-${sheet.status}`}>{STATUS_LABEL[sheet.status]}</span>
       </h1>
       <p className="muted">
-        {sheet.major_process.name} · {sheet.construction_code} · {sheet.equipment_module} · v{sheet.version} ·
-        업로더 {sheet.uploaded_by || "-"}
+        {sheet.major_process.name} · {sheet.construction_code}
+        {sheet.equipment_module ? ` · ${sheet.equipment_module}` : ""} · v{sheet.version} · 업로더{" "}
+        {sheet.uploaded_by || "-"}
       </p>
 
       <div className="panel" style={{ display: "flex", gap: 8 }}>

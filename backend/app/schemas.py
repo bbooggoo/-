@@ -66,7 +66,7 @@ class SpecSheetListOut(BaseModel):
     id: int
     major_process: MajorProcessOut
     construction_code: str
-    equipment_module: str
+    equipment_module: str | None
     title: str
     version: int
     status: SpecSheetStatus
@@ -78,6 +78,13 @@ class SpecSheetListOut(BaseModel):
 class SpecSheetDetailOut(SpecSheetListOut):
     fields: list[SpecFieldOut] = []
     validation_results: list[ValidationResultOut] = []
+
+
+class SpecSheetUploadResultOut(BaseModel):
+    """업로드 1건이 건설코드별로 여러 SpecSheet 로 나뉠 수 있어 목록 + 경고로 반환."""
+
+    created: list[SpecSheetDetailOut] = []
+    warnings: list[str] = []
 
 
 class ValidationRuleIn(BaseModel):

@@ -3,8 +3,8 @@ ORM 모델.
 
 용어 매핑 (한글 -> 영문 테이블/필드):
   대공정   -> MajorProcess
-  건설코드 -> SpecSheet.construction_code
-  설비모듈 -> SpecSheet.equipment_module
+  건설코드 -> SpecSheet.construction_code (엑셀 데이터에서 자동 추출, 건설코드 단위로 SpecSheet 1건)
+  설비모듈 -> 대분류별로 SpecField 여러 건 (SpecSheet.equipment_module 은 요약 표시용)
   제원표   -> SpecSheet
   제원 항목(셀) -> SpecField
   담당자   -> Owner
@@ -115,8 +115,12 @@ class SpecSheet(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
 
     major_process_id: Mapped[int] = mapped_column(ForeignKey("major_processes.id"))
-    construction_code: Mapped[str] = mapped_column(String(16), index=True)  # 예: PDXXXXX
-    equipment_module: Mapped[str] = mapped_column(String(64), index=True)   # 예: GAS/SCRUBBER/MAIN
+    construction_code: Mapped[str] = mapped_column(String(16), index=True)  # 예: PD000001
+
+    # 설비모듈은 시트 구조상 대분류(UTILITY/GAS·AIR/POWER...)마다 별도 열로 존재하므로
+    # 여기서는 업로드시 파싱된 "요약 표시용" 값일 뿐, 식별자로 쓰지 않는다
+    # (예: "GAS/AIR:SCRUBBER, POWER:MAIN"). 개별 설비모듈 값은 SpecField 로 저장된다.
+    equipment_module: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     title: Mapped[str] = mapped_column(String(255))
     source_filename: Mapped[str] = mapped_column(String(255))
@@ -146,7 +150,7 @@ class SpecSheet(Base):
 
     __table_args__ = (
         UniqueConstraint(
-            "construction_code", "equipment_module", "version", name="uq_spec_identity_version"
+            "construction_code", "major_process_id", "version", name="uq_spec_identity_version"
         ),
     )
 

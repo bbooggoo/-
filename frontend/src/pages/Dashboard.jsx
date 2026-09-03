@@ -88,7 +88,7 @@ export default function Dashboard() {
                 <tr key={s.id}>
                   <td>{s.major_process.name}</td>
                   <td>{s.construction_code}</td>
-                  <td>{s.equipment_module}</td>
+                  <td className={s.equipment_module ? "" : "muted"}>{s.equipment_module || "-"}</td>
                   <td>
                     <Link to={`/spec-sheets/${s.id}`}>{s.title}</Link>
                   </td>
