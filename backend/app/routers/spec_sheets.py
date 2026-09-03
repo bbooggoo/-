@@ -133,6 +133,34 @@ def _persist_sheet(
     return sheet
 
 
+def _resolve_group_major_process(
+    db: Session,
+    default_mp: MajorProcess,
+    major_process_raw: str | None,
+    mp_by_key: dict[str, MajorProcess],
+    warnings: list[str],
+    construction_code: str,
+) -> MajorProcess:
+    """건설코드 그룹의 실제 대공정을 판별한다.
+
+    시트에 "대공정" 값이 없으면 업로드 시 선택한 대공정(default_mp)을 그대로 쓴다
+    (대공정별로 파일이 따로 오는 일반적인 경우). 값이 있으면 대소문자/공백을 무시하고
+    이름 또는 코드로 매칭해서, 한 파일에 여러 대공정이 섞여 들어온 경우에도 건설코드
+    그룹마다 올바른 대공정으로 배정한다. 매칭되지 않으면 경고를 남기고 default_mp로
+    처리한다.
+    """
+    if not major_process_raw:
+        return default_mp
+    resolved = mp_by_key.get(major_process_raw.strip().upper())
+    if resolved is not None:
+        return resolved
+    warnings.append(
+        f"'{construction_code}' 그룹의 대공정 표기 '{major_process_raw}'를 인식하지 못해 "
+        f"업로드 시 선택한 대공정({default_mp.name})으로 처리했습니다."
+    )
+    return default_mp
+
+
 @router.post("/upload", response_model=schemas.SpecSheetUploadResultOut)
 async def upload_spec_sheet(
     file: UploadFile = File(...),
@@ -141,10 +169,10 @@ async def upload_spec_sheet(
     sheet_name: str | None = Form(None),
     # 파싱 모드: "grouped"(기본, 2단 헤더 + 건설코드 자동 그룹핑) | "simple"(라벨/값/단위 열)
     layout: str = Form("grouped"),
-    # grouped 모드 설정
-    category_row: int = Form(1),
-    label_row: int = Form(2),
-    data_start_row: int = Form(3),
+    # grouped 모드 설정. 헤더 행 번호를 비워두면(None) 자동으로 인식한다.
+    category_row: int | None = Form(None),
+    label_row: int | None = Form(None),
+    data_start_row: int | None = Form(None),
     construction_code_override: str | None = Form(None),
     # simple 모드 설정 (레거시)
     construction_code: str | None = Form(None),
@@ -225,11 +253,20 @@ async def upload_spec_sheet(
                 detail="건설코드를 하나도 인식하지 못했습니다. "
                 "'건설코드 대체값'을 입력하거나 시트의 건설코드 열을 확인해 주세요.",
             )
+        # 시트 안에 대공정이 섞여 있는 경우를 위한 이름/코드 -> MajorProcess 조회 테이블
+        all_mps = db.query(MajorProcess).all()
+        mp_by_key = {}
+        for m in all_mps:
+            mp_by_key[m.name.strip().upper()] = m
+            mp_by_key[m.code.strip().upper()] = m
 
         for group in parsed.groups:
+            group_mp = _resolve_group_major_process(
+                db, mp, group.major_process_raw, mp_by_key, warnings, group.construction_code
+            )
             sheet = _persist_sheet(
                 db,
-                mp=mp,
+                mp=group_mp,
                 construction_code=group.construction_code,
                 equipment_module=group.equipment_module_summary,
                 title=None,
@@ -241,6 +278,7 @@ async def upload_spec_sheet(
                     "category_row": category_row,
                     "label_row": label_row,
                     "data_start_row": data_start_row,
+                    "header_rows_auto_detected": parsed.header_rows_auto_detected,
                     "row_range": list(group.row_range),
                 },
                 cells=group.cells,

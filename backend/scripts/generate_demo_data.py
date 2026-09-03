@@ -17,8 +17,12 @@
      SPECIALITY GAS 자재명). 단, UPW의 성상명(HOT DI/COOL DI/HIGH DI)과 POWER의
      전원종류(NOR/UPS)는 사용자가 지정한 값이 전부이므로 그대로 고정.
   6. EXHAUST의 성상명은 PFC/DE-PFC/ACID/ALKALI/GDM/HEAT-GEN/RECOVERY 중에서만 사용.
-  7. 행이 한 번 작성되면 그 행의 UTILITY 칸(위치/라인/층/대공정/건설코드/설비대수)은
-     모두 채운다 (건설코드 carry-down으로 빈칸을 남기지 않는다).
+  7. 행이 한 번 작성되면 그 행의 UTILITY 칸(위치/라인/층/대공정/PRC/MODEL/MAKER/
+     건설코드/설비대수)은 모두 채운다 (건설코드 carry-down으로 빈칸을 남기지 않는다).
+  8. 라인은 전부 P4. 층은 3F/4F/5F 중에서 다양하게 섞는다.
+  9. UTILITY에 PRC(장비 버전)/MODEL(모델명)/MAKER(생산장비 제조사) 열을 추가.
+     건설코드 그룹(=장비 한 대) 단위로 하나씩 정해서 그 그룹의 모든 행에 동일하게
+     적용한다 (같은 장비인데 행마다 버전/모델이 바뀌면 이상하므로).
 
 유량 OVER(성상별 기준 초과)와 표준화 안 된 성상값(GAS/AIR에 가끔 섞이는 비표준 표기)은
 의도적으로 남겨서, 시드된 기본 검증 규칙(app/seed.py의 DEFAULT_VALIDATION_RULES)이
@@ -38,6 +42,7 @@ from app.models import MAJOR_PROCESS_SEED  # noqa: E402
 
 COLUMNS = [
     ("UTILITY", "위치"), ("UTILITY", "라인"), ("UTILITY", "층"), ("UTILITY", "대공정"),
+    ("UTILITY", "PRC"), ("UTILITY", "MODEL"), ("UTILITY", "MAKER"),
     ("UTILITY", "건설코드"), ("UTILITY", "설비대수"),
     ("GAS/AIR", "배관수량"), ("GAS/AIR", "설비모듈"), ("GAS/AIR", "유량"), ("GAS/AIR", "성상명"),
     ("GAS/AIR", "배관수량"), ("GAS/AIR", "압력"), ("GAS/AIR", "배관재질"),
@@ -81,10 +86,25 @@ POWER_TYPES = ["NOR", "UPS"]  # 고정 (사용자가 쓴 종류가 전부)
 MODULES = ["SCRUBBER", "MAIN", "CONTROLLER", "GAS CABINET"]
 MATERIALS = ["SUS316L", "SUS304", "PVC", "PFA"]
 
-SITES = [  # (위치, 라인, 층) - 대공정 인덱스에 따라 순환
-    ("평택", "P4", "2F"), ("평택", "P4", "3F"), ("평택", "P4", "4F"),
-    ("평택", "P3", "2F"), ("평택", "P3", "3F"), ("화성", "P1", "1F"),
-]
+LOCATIONS = ["평택", "화성"]
+FLOORS = ["3F", "4F", "5F"]
+LINE = "P4"  # 라인은 전부 P4
+
+PRC_POOL = ["V1.0", "V1.1", "V1.2", "V2.0", "V2.1", "V3.0"]
+# 메이커사 이름 + 모델명에 쓸 약어 (실제 트레이드 모델명이 아니라 약어+숫자로 합성)
+MAKER_PREFIX = {
+    "AMAT": "AMT", "Lam Research": "LRC", "TEL": "TEL", "ASML": "ASM",
+    "KLA": "KLA", "Hitachi High-Tech": "HHT", "ASM International": "ASI", "Veeco": "VEC",
+}
+MAKER_POOL = list(MAKER_PREFIX)
+
+
+def equipment_identity(rng):
+    """건설코드 그룹(장비 한 대) 단위로 PRC/MODEL/MAKER를 하나씩 정한다."""
+    maker = rng.choice(MAKER_POOL)
+    model = f"{MAKER_PREFIX[maker]}-{rng.randint(100, 999)}{rng.choice('ABC')}"
+    prc = rng.choice(PRC_POOL)
+    return prc, model, maker
 
 
 def col_index(category, label, occurrence=0):
@@ -97,6 +117,9 @@ def write_row(ws, r, utility, item_values):
     ws.cell(r, col_index("UTILITY", "라인"), utility["라인"])
     ws.cell(r, col_index("UTILITY", "층"), utility["층"])
     ws.cell(r, col_index("UTILITY", "대공정"), utility["대공정"])
+    ws.cell(r, col_index("UTILITY", "PRC"), utility["PRC"])
+    ws.cell(r, col_index("UTILITY", "MODEL"), utility["MODEL"])
+    ws.cell(r, col_index("UTILITY", "MAKER"), utility["MAKER"])
     ws.cell(r, col_index("UTILITY", "건설코드"), utility["건설코드"])
     ws.cell(r, col_index("UTILITY", "설비대수"), 1)  # 항상 1
 
@@ -224,9 +247,6 @@ def build_sheet(ws, major_process_name, rng, target_rows):
         c1.alignment = Alignment(horizontal="center")
         c2.alignment = Alignment(horizontal="center")
 
-    site = SITES[rng.randrange(len(SITES))]
-    utility_base = {"위치": site[0], "라인": site[1], "층": site[2], "대공정": major_process_name}
-
     r = 3
     family_no = 1
     code_prefix = f"PD{rng.randint(100000, 899999):06d}"[:8]  # P + 7자리
@@ -234,17 +254,24 @@ def build_sheet(ws, major_process_name, rng, target_rows):
 
     while r - 3 < target_rows:
         code_base = f"PD{(code_base_num + family_no * 10) % 900000 + 100000:06d}"
+        # 위치/층은 "가족"(장비 한 세트) 단위로 정한다 - 라인은 전부 P4로 고정
+        site_utility = {
+            "위치": rng.choice(LOCATIONS), "라인": LINE, "층": rng.choice(FLOORS), "대공정": major_process_name,
+        }
 
         # MAIN (-01)
-        for items in [build_main_rows(rng) for _ in range(1)]:
-            for item in items:
-                write_row(ws, r, dict(utility_base, 건설코드=f"{code_base}-01"), item)
-                r += 1
+        prc, model, maker = equipment_identity(rng)
+        main_utility = dict(site_utility, 건설코드=f"{code_base}-01", PRC=prc, MODEL=model, MAKER=maker)
+        for item in build_main_rows(rng):
+            write_row(ws, r, main_utility, item)
+            r += 1
 
-        # 부대설비 1~3개 (-02, -03, ...)
+        # 부대설비 1~3개 (-02, -03, ...) - 각자 자기 PRC/MODEL/MAKER를 가진 별도 장비
         for sub_idx in range(2, rng.randint(3, 5)):
+            prc, model, maker = equipment_identity(rng)
+            aux_utility = dict(site_utility, 건설코드=f"{code_base}-{sub_idx:02d}", PRC=prc, MODEL=model, MAKER=maker)
             for item in build_aux_rows(rng):
-                write_row(ws, r, dict(utility_base, 건설코드=f"{code_base}-{sub_idx:02d}"), item)
+                write_row(ws, r, aux_utility, item)
                 r += 1
 
         family_no += 1

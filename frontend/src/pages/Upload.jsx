@@ -10,9 +10,9 @@ export default function Upload() {
     major_process_id: "",
     uploaded_by: "",
     sheet_name: "",
-    category_row: 1,
-    label_row: 2,
-    data_start_row: 3,
+    category_row: "",
+    label_row: "",
+    data_start_row: "",
     construction_code_override: "",
   });
 
@@ -73,7 +73,11 @@ export default function Upload() {
     setSubmitting(true);
     const data = new FormData();
     data.append("layout", layout);
-    Object.entries(form).forEach(([k, v]) => data.append(k, v));
+    // 빈 값은 아예 보내지 않는다 - 대분류/세부항목/데이터 시작 행을 비워두면
+    // 서버가 자동으로 헤더 위치를 인식한다.
+    Object.entries(form).forEach(([k, v]) => {
+      if (v !== "") data.append(k, v);
+    });
     data.append("file", file);
     try {
       const res = await api.post("/spec-sheets/upload", data, {
@@ -134,23 +138,43 @@ export default function Upload() {
           <div className="panel">
             <h2>2단 헤더 파싱 설정</h2>
             <p className="muted">
-              1행 = 대분류(UTILITY/GAS·AIR/POWER...), 2행 = 세부 항목(위치/라인/건설코드/유량/성상명...) 구조를
-              가정합니다. 시트 안의 <b>건설코드</b> 열 값을 그대로 읽어서, 같은 건설코드를 쓰는 행들을 묶어
-              건설코드 1개당 제원표 1건으로 자동 생성합니다. 건설코드가 비어 있는 행은 바로 위 행의 값을
-              이어받습니다(카드다운).
+              대분류(UTILITY/GAS·AIR/POWER...) + 세부 항목(위치/라인/건설코드/유량/성상명...) 2단 헤더
+              구조를 가정합니다. 시트 안의 <b>건설코드</b> 열 값을 그대로 읽어서, 같은 건설코드를 쓰는
+              행들을 묶어 건설코드 1개당 제원표 1건으로 자동 생성합니다. 건설코드가 비어 있는 행은 바로
+              위 행의 값을 이어받습니다(캐리다운). 대분류/세부항목/데이터 시작 행 번호를 비워두면
+              헤더 위치를 자동으로 인식합니다 — 파일마다 형식이 조금씩 달라도(제목행이 추가로 있거나
+              헤더가 몇 칸 밀려있는 경우 등) 대체로 알아서 찾아냅니다. 결과가 이상하면 직접 지정하세요.
             </p>
             <div className="form-row">
               <div className="field">
-                <label>대분류 행</label>
-                <input type="number" min="1" value={grouped.category_row} onChange={update("category_row")} />
+                <label>대분류 행 (선택)</label>
+                <input
+                  type="number"
+                  min="1"
+                  value={grouped.category_row}
+                  onChange={update("category_row")}
+                  placeholder="자동 인식"
+                />
               </div>
               <div className="field">
-                <label>세부항목 행</label>
-                <input type="number" min="1" value={grouped.label_row} onChange={update("label_row")} />
+                <label>세부항목 행 (선택)</label>
+                <input
+                  type="number"
+                  min="1"
+                  value={grouped.label_row}
+                  onChange={update("label_row")}
+                  placeholder="자동 인식"
+                />
               </div>
               <div className="field">
-                <label>데이터 시작 행</label>
-                <input type="number" min="1" value={grouped.data_start_row} onChange={update("data_start_row")} />
+                <label>데이터 시작 행 (선택)</label>
+                <input
+                  type="number"
+                  min="1"
+                  value={grouped.data_start_row}
+                  onChange={update("data_start_row")}
+                  placeholder="자동 인식"
+                />
               </div>
               <div className="field">
                 <label>건설코드 대체값 (선택)</label>
@@ -239,6 +263,7 @@ export default function Upload() {
               <thead>
                 <tr>
                   <th>건설코드</th>
+                  <th>대공정</th>
                   <th>설비모듈 요약</th>
                   <th>버전</th>
                   <th></th>
@@ -248,6 +273,7 @@ export default function Upload() {
                 {result.created.map((s) => (
                   <tr key={s.id}>
                     <td>{s.construction_code}</td>
+                    <td>{s.major_process.name}</td>
                     <td className="muted">{s.equipment_module || "-"}</td>
                     <td>v{s.version}</td>
                     <td>

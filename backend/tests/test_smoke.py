@@ -94,7 +94,7 @@ def _make_multi_category_excel(columns: list[tuple[str, str]], rows: list[dict])
         ws.cell(1, col_idx, category)
         ws.cell(2, col_idx, label)
 
-    common_labels = {"위치", "라인", "층", "건설코드", "설비대수"}
+    common_labels = {"위치", "라인", "층", "대공정", "PRC", "MODEL", "MAKER", "건설코드", "설비대수"}
     for r, row in enumerate(rows, start=3):
         for col_idx, (category, label) in enumerate(columns, start=1):
             key = label if label in common_labels else f"{category}_{label}"
@@ -456,3 +456,121 @@ def test_aggregation_matches_hand_calculated_totals(client):
 
     assert by_category["EXHAUST"]["unit"] == "CMM"
     assert by_category["EXHAUST"]["totals"]["FUME"] == pytest.approx(10.0)  # 2 * 5
+
+
+def _make_shifted_header_excel(rows: list[dict]):
+    """제목 행이 맨 위에 하나 더 있어서 대분류/세부항목 행이 한 칸씩 밀린 엑셀을 만든다
+    (category_row/label_row/data_start_row를 지정하지 않고도 자동 인식되는지 확인용)."""
+    wb = Workbook()
+    ws = wb.active
+    ws.cell(1, 1, "반도체 제원표 v1.2 (사내 배포용)")  # 제목행 - 헤더가 아님
+
+    columns = [
+        ("UTILITY", "위치"), ("UTILITY", "라인"), ("UTILITY", "건설코드"),
+        ("GAS/AIR", "설비모듈"), ("GAS/AIR", "유량"), ("GAS/AIR", "성상명"),
+    ]
+    for col_idx, (category, label) in enumerate(columns, start=1):
+        ws.cell(2, col_idx, category)
+        ws.cell(3, col_idx, label)
+
+    for r, row in enumerate(rows, start=4):
+        ws.cell(r, 1, row.get("위치"))
+        ws.cell(r, 2, row.get("라인"))
+        ws.cell(r, 3, row.get("건설코드"))
+        ws.cell(r, 4, row.get("설비모듈"))
+        ws.cell(r, 5, row.get("유량"))
+        ws.cell(r, 6, row.get("성상명"))
+
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return buf
+
+
+def test_header_rows_auto_detected_when_shifted_down(client):
+    """category_row/label_row/data_start_row를 지정하지 않아도, 제목행 때문에 헤더가
+    한 칸 밀린 파일에서 알아서 헤더 위치를 찾아 정상 파싱하는지 확인."""
+    mps = client.get("/api/major-processes").json()
+    cvd = next(m for m in mps if m["code"] == "CVD")
+
+    excel = _make_shifted_header_excel(
+        [{"위치": "평택", "라인": "P4", "건설코드": "PD000001", "설비모듈": "SCRUBBER", "유량": 5, "성상명": "N2"}]
+    )
+    res = client.post(
+        "/api/spec-sheets/upload",
+        data={"major_process_id": cvd["id"]},  # category_row 등은 일부러 지정하지 않음
+        files={"file": ("spec.xlsx", excel, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["warnings"] == []  # 헤더가 뚜렷하게 매칭되니 "확신 없음" 경고도 없어야 함
+    sheet = body["created"][0]
+    assert sheet["construction_code"] == "PD000001"
+    field_names = {f["field_name"] for f in sheet["fields"] if f["field_name"]}
+    assert "GAS/AIR_유량" in field_names
+    assert "GAS/AIR_성상명" in field_names
+
+
+def test_mixed_major_processes_in_one_file_are_resolved_per_group(client):
+    """한 엑셀 파일에 대공정이 여러 개 섞여 있으면(예: 대공정별 파일이 아니라 통합 파일),
+    행의 '대공정' 값으로 건설코드 그룹마다 올바른 대공정을 판별해야 한다. 인식 못 하는
+    표기는 업로드 시 선택한 대공정으로 대체하고 경고를 남긴다."""
+    mps = client.get("/api/major-processes").json()
+    cvd = next(m for m in mps if m["code"] == "CVD")
+    etch = next(m for m in mps if m["code"] == "ETCH")
+
+    columns = [
+        ("UTILITY", "위치"), ("UTILITY", "라인"), ("UTILITY", "대공정"), ("UTILITY", "건설코드"),
+        ("GAS/AIR", "유량"), ("GAS/AIR", "성상명"),
+    ]
+    rows = [
+        {"위치": "평택", "라인": "P4", "대공정": "CVD", "건설코드": "PD000001", "GAS/AIR_유량": 5, "GAS/AIR_성상명": "N2"},
+        {"대공정": "ETCH", "건설코드": "PD000002", "GAS/AIR_유량": 4, "GAS/AIR_성상명": "AR"},
+        # 대공정 표기를 알아볼 수 없는 그룹 (오타/미등록 값) -> 업로드 시 선택한 대공정(CVD)으로 대체
+        {"대공정": "이상한대공정", "건설코드": "PD000003", "GAS/AIR_유량": 3, "GAS/AIR_성상명": "O2"},
+    ]
+    excel = _make_multi_category_excel(columns, rows)
+
+    res = client.post(
+        "/api/spec-sheets/upload",
+        data={"major_process_id": cvd["id"]},  # 기본값(대체용) = CVD
+        files={"file": ("spec.xlsx", excel, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert any("이상한대공정" in w and "인식하지 못해" in w for w in body["warnings"])
+
+    by_code = {s["construction_code"]: s for s in body["created"]}
+    assert by_code["PD000001"]["major_process"]["code"] == "CVD"
+    assert by_code["PD000002"]["major_process"]["code"] == "ETCH"
+    assert by_code["PD000003"]["major_process"]["code"] == "CVD"  # 대체 적용
+
+
+def test_prc_model_maker_fields_recognized_as_common_fields(client):
+    """UTILITY의 PRC/MODEL/MAKER 열이 대분류 접두어 없이 공통 항목으로 파싱되는지 확인."""
+    mps = client.get("/api/major-processes").json()
+    cvd = next(m for m in mps if m["code"] == "CVD")
+
+    columns = [
+        ("UTILITY", "위치"), ("UTILITY", "라인"), ("UTILITY", "건설코드"),
+        ("UTILITY", "PRC"), ("UTILITY", "MODEL"), ("UTILITY", "MAKER"),
+        ("GAS/AIR", "유량"), ("GAS/AIR", "성상명"),
+    ]
+    rows = [
+        {
+            "위치": "평택", "라인": "P4", "건설코드": "PD000001",
+            "PRC": "V1.2", "MODEL": "AMT-482A", "MAKER": "AMAT",
+            "GAS/AIR_유량": 5, "GAS/AIR_성상명": "N2",
+        }
+    ]
+    excel = _make_multi_category_excel(columns, rows)
+
+    res = client.post(
+        "/api/spec-sheets/upload",
+        data={"major_process_id": cvd["id"]},
+        files={"file": ("spec.xlsx", excel, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+    )
+    assert res.status_code == 200
+    sheet = res.json()["created"][0]
+    values = {f["field_name"]: f["value"] for f in sheet["fields"] if f["field_name"] in ("PRC", "MODEL", "MAKER")}
+    assert values == {"PRC": "V1.2", "MODEL": "AMT-482A", "MAKER": "AMAT"}
