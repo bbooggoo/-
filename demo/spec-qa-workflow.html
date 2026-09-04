@@ -265,6 +265,7 @@
   </div>
   <div class="spacer"></div>
   <div class="live-pill" id="livePill"><span class="live-dot"></span><span id="liveLabel">연결 확인 중</span></div>
+  <select class="user-select" id="pjtSelect" aria-label="현재 PJT 선택"></select>
   <select class="user-select" id="userSelect" aria-label="현재 작업자 선택"></select>
 </div>
 <div class="page-nav" id="pageNav"></div>
@@ -291,6 +292,17 @@
     "PHOTO", "CVD", "ETCH", "METAL", "CMP", "IMP", "DIFF", "PMTC", "EDS", "ANALYSIS",
     "제조환경설비", "물류자동화", "CLN",
   ];
+
+  // 사업장(PJT) · 단계(phase) — 대시보드/SUMMARY/제원 DB/질의응답 모두 이 값으로 필터링된다.
+  var PJT_SITES = { P3: 4, P4: 4, P5: 6 };
+  function pjtOptions() {
+    var opts = [];
+    Object.keys(PJT_SITES).forEach(function (site) {
+      for (var i = 1; i <= PJT_SITES[site]; i++) opts.push(site + " ph" + i);
+    });
+    return opts;
+  }
+  var DEFAULT_PJT = "P5 ph1";
 
   var DISCIPLINES = [
     { code: "PIPING", name: "공종배관" },
@@ -348,7 +360,7 @@
   // ===================================================================
   var SEED_SHEETS = [
     {
-      code: "PD000101", dept: "CVD", title: "CVD 장비 A동 제원표", location: "평택 · P4 · 3F",
+      code: "PD000101", dept: "CVD", title: "CVD 장비 A동 제원표", location: "평택 · P5 ph1 · 3F", pjt: "P5 ph1",
       items: [
         { category: "GAS/AIR", 성상명: "N2", 유량: 9, 배관수량: 2, 압력: 3.5, 배관재질: "SUS316L", 설비모듈: "SCRUBBER" },
         { category: "GAS/AIR", 성상명: "O2", 유량: 8, 배관수량: 1, 압력: 3.0, 배관재질: "SUS316L", 설비모듈: "SCRUBBER" },
@@ -367,7 +379,7 @@
       ],
     },
     {
-      code: "PD000102", dept: "ETCH", title: "ETCH 장비 B동 제원표", location: "평택 · P4 · 4F",
+      code: "PD000102", dept: "ETCH", title: "ETCH 장비 B동 제원표", location: "평택 · P5 ph1 · 4F", pjt: "P5 ph1",
       items: [
         { category: "GAS/AIR", 성상명: "AR", 유량: 7, 배관수량: 3, 압력: 3.8, 배관재질: "SUS316L", 설비모듈: "SCRUBBER" },
         { category: "GAS/AIR", 성상명: "H2", 유량: 5, 배관수량: 2, 압력: 3.0, 배관재질: "SUS316L", 설비모듈: "SCRUBBER" },
@@ -426,7 +438,6 @@
     var WASTE_MATERIALS = ["SiH4", "ACID WASTE", "ALKALI WASTE", "SOLVENT WASTE", "SLUDGE"];
     var PIPE_MATERIALS = ["SUS316L", "SUS304", "PVC", "PVDF", "CPVC", "HDPE"];
     var EQUIP_MODULES = ["MAIN", "SCRUBBER", "GAS CABINET", "SUB", "CDA UNIT", "CHILLER", "PUMP UNIT"];
-    var BUILDINGS = ["평택 · P3", "평택 · P4", "평택 · P5", "화성 · H1", "화성 · H2", "이천 · M14", "이천 · M16"];
     var BUILDING_LETTERS = ["A", "B", "C", "D", "E", "F", "G", "H", "J", "K"];
 
     function genGasItem() {
@@ -493,12 +504,11 @@
       var seq = 102 + i; // PD000101/102 다음부터 이어서 채번
       var code = "PD" + String(seq).padStart(6, "0");
       var dept = pick(MAJOR_PROCESSES);
-      var building = pick(BUILDINGS);
       var letter = pick(BUILDING_LETTERS);
       var floor = randInt(1, 6);
       extraSheets.push({
         code: code, dept: dept, title: dept + " 장비 " + letter + "동 제원표",
-        location: building + " · " + floor + "F", items: genItems(),
+        location: "평택 · " + DEFAULT_PJT + " · " + floor + "F", pjt: DEFAULT_PJT, items: genItems(),
       });
     }
     SEED_SHEETS = SEED_SHEETS.concat(extraSheets);
@@ -558,6 +568,7 @@
     lastUserIdForAutoFilter: undefined,
     dbFilterMp: "", dbFilterCategory: "", dbSearch: "",
     expandedVersion: null,
+    selectedPjt: "",
   };
 
   var store = null;
@@ -636,7 +647,10 @@
     });
     return result;
   }
-  function sheetList() { return Object.keys(state.sheets).map(function (c) { return state.sheets[c]; }); }
+  function sheetList() {
+    return Object.keys(state.sheets).map(function (c) { return state.sheets[c]; })
+      .filter(function (s) { return !state.selectedPjt || s.pjt === state.selectedPjt; });
+  }
   function sheetsForMp(mp) { return sheetList().filter(function (s) { return !mp || s.dept === mp; }); }
   function computeSummary(mp) {
     var sheets = sheetsForMp(mp);
@@ -685,8 +699,8 @@
         var key = code + "#" + iss.itemIdx + "#" + iss.field;
         if (alreadyTargeted[key]) return;
         var asIs = items[iss.itemIdx][iss.field];
-        var gKey = [sheet.dept, iss.field, asIs, iss.suggestedValue].join("||");
-        if (!groups[gKey]) groups[gKey] = { majorProcess: sheet.dept, field: iss.field, asIs: asIs, toBe: iss.suggestedValue, targets: [] };
+        var gKey = [sheet.pjt, sheet.dept, iss.field, asIs, iss.suggestedValue].join("||");
+        if (!groups[gKey]) groups[gKey] = { pjt: sheet.pjt, majorProcess: sheet.dept, field: iss.field, asIs: asIs, toBe: iss.suggestedValue, targets: [] };
         groups[gKey].targets.push({ sheetCode: code, itemIdx: iss.itemIdx, field: iss.field });
       });
     });
@@ -695,7 +709,7 @@
     var discipline = CATEGORY_TO_DISCIPLINE["GAS/AIR"];
     return Promise.all(newGroups.map(function (g) {
       return store.addThread({
-        queryType: "AUTO", majorProcess: g.majorProcess, discipline: discipline, fieldLabel: g.field,
+        queryType: "AUTO", pjt: g.pjt, majorProcess: g.majorProcess, discipline: discipline, fieldLabel: g.field,
         asIsValue: String(g.asIs), toBeValue: String(g.toBe), targets: g.targets, status: "OPEN",
         title: "[자동] " + g.field + " '" + g.asIs + "' → '" + g.toBe + "' (" + g.targets.length + "건)",
         question: null, createdBy: "시스템(자동 생성)", createdAt: nowIso(), updatedAt: nowIso(),
@@ -957,7 +971,7 @@
     var history = prev ? (prev.versionHistory || []).slice() : [];
     if (prev) {
       history.unshift({
-        ver: prev.ver || 1, dept: prev.dept, title: prev.title, location: prev.location,
+        ver: prev.ver || 1, dept: prev.dept, title: prev.title, location: prev.location, pjt: prev.pjt,
         items: prev.items, versionSource: prev.versionSource || "SEED", archivedAt: nowIso(),
       });
       if (history.length > 20) history = history.slice(0, 20);
@@ -1018,6 +1032,14 @@
       applyDashboardAutoFilter(); applySummaryAutoFilter(); applyQueriesAutoFilter();
       render();
     };
+  }
+  function renderPjtSelect() {
+    var sel = document.getElementById("pjtSelect");
+    sel.innerHTML = '<option value="">전체 PJT</option>' + pjtOptions().map(function (p) {
+      return '<option value="' + p + '">' + p + "</option>";
+    }).join("");
+    sel.value = state.selectedPjt || "";
+    sel.onchange = function () { state.selectedPjt = sel.value; render(); };
   }
   function renderPageNav() {
     var owner = currentOwner();
@@ -1236,6 +1258,7 @@
   function renderQueriesPage(main) {
     var owner = currentOwner();
     var threads = state.threads.filter(function (t) {
+      if (state.selectedPjt && t.pjt !== state.selectedPjt) return false;
       if (state.qFilterMp && t.majorProcess !== state.qFilterMp) return false;
       if (state.qFilterDiscipline && t.discipline !== state.qFilterDiscipline) return false;
       if (state.qFilterType && t.queryType !== state.qFilterType) return false;
@@ -1293,7 +1316,7 @@
         '<span class="chip ' + QA_STATUS_CHIP[t.status] + '">' + QA_STATUS_LABEL[t.status] + "</span> " +
         '<span class="chip type-' + t.queryType + '">' + (t.queryType === "AUTO" ? "자동" : "수동") + "</span>" +
         '<div class="t-title">' + esc(t.title) + "</div>" +
-        '<div class="t-meta">' + esc(t.majorProcess) + (t.discipline ? " · " + disciplineName(t.discipline) : "") + " · 대상 " + (t.targets || []).length + "건" + (t.toBeValue != null ? " · TO-BE: " + esc(t.toBeValue) : "") + "</div>" +
+        '<div class="t-meta">' + (t.pjt ? esc(t.pjt) + " · " : "") + esc(t.majorProcess) + (t.discipline ? " · " + disciplineName(t.discipline) : "") + " · 대상 " + (t.targets || []).length + "건" + (t.toBeValue != null ? " · TO-BE: " + esc(t.toBeValue) : "") + "</div>" +
       "</div>"
     );
   }
@@ -1401,6 +1424,7 @@
         '<div class="panel">' +
           '<p class="lead">실제 백엔드와 같은 파서 로직(2단 헤더 자동 인식 + 건설코드 자동 그룹핑 + 대공정 자동 판별)을 이 브라우저에서 그대로 돌립니다.</p>' +
           '<div class="filter-bar">' +
+            '<div class="field"><label class="field-label">PJT</label><select id="upPjt">' + pjtOptions().map(function (p) { return '<option value="' + p + '"' + (p === (state.selectedPjt || DEFAULT_PJT) ? " selected" : "") + ">" + p + "</option>"; }).join("") + "</select></div>" +
             '<div class="field"><label class="field-label">대공정 (기본값)</label><select id="upMp">' + MAJOR_PROCESSES.map(function (mp) { return '<option value="' + mp + '">' + mp + "</option>"; }).join("") + "</select></div>" +
             '<div class="field"><label class="field-label">시트(탭) 이름 (선택)</label><input class="text" id="upSheetName" placeholder="비워두면 첫 시트"></div>' +
             '<div class="field"><label class="field-label">건설코드 대체값 (선택)</label><input class="text" id="upCodeOverride"></div>' +
@@ -1425,6 +1449,7 @@
     var file = fileInput && fileInput.files[0];
     if (!file) { state.uploadResult = { error: "엑셀 파일을 선택해 주세요." }; render(); return; }
     var defaultDept = document.getElementById("upMp").value;
+    var pjtVal = document.getElementById("upPjt").value;
     var sheetLabel = (document.getElementById("upSheetName").value || "").trim();
     var codeOverride = (document.getElementById("upCodeOverride").value || "").trim().toUpperCase() || null;
     state.uploadBusy = true; state.uploadResult = null; render();
@@ -1438,7 +1463,7 @@
       var owner = currentOwner();
       return Promise.all(groups.map(function (g) {
         return saveSheetVersion(g.code, {
-          code: g.code, dept: g.dept, title: g.dept + " " + g.code, location: g.location, items: g.items,
+          code: g.code, dept: g.dept, title: g.dept + " " + g.code, location: g.location, pjt: pjtVal, items: g.items,
           uploadedBy: owner ? owner.name : "관리자", uploadedAt: nowIso(),
         }, "UPLOAD");
       })).then(function () {
@@ -1515,7 +1540,10 @@
     { id: "versions", label: "버전 이력" },
   ];
   function renderSheetPage(main) {
-    var codes = Object.keys(state.sheets).sort();
+    var codes = sheetList().map(function (s) { return s.code; }).sort();
+    if (state.selectedSheet && codes.indexOf(state.selectedSheet) === -1 && state.sheets[state.selectedSheet]) {
+      codes = codes.concat([state.selectedSheet]).sort();
+    }
     var code = state.selectedSheet || codes[0];
     if (!code) { main.innerHTML = '<div class="page"><div class="empty-state">등록된 제원표가 없습니다.</div></div>'; return; }
     state.selectedSheet = code;
@@ -1544,7 +1572,7 @@
       '<div class="shell">' +
         '<div class="panel" style="padding:0"><div class="rail-head"><div class="rail-head-row"><h2>제원표</h2></div></div><div class="rail-list">' + railHtml + "</div></div>" +
         '<div class="panel" style="padding:0">' +
-          '<div class="workspace-head"><div><h1>' + esc(sheet.title || code) + "</h1><div class=\"meta\"><span class=\"num\">" + code + '</span><span class="chip neutral">v' + (sheet.ver || 1) + '</span><span class="sep">·</span><span>' + esc(sheet.location || "") + '</span><span class="sep">·</span><span class="chip dept">' + esc(sheet.dept) + "</span>" +
+          '<div class="workspace-head"><div><h1>' + esc(sheet.title || code) + "</h1><div class=\"meta\"><span class=\"num\">" + code + '</span><span class="chip neutral">v' + (sheet.ver || 1) + '</span>' + (sheet.pjt ? '<span class="sep">·</span><span class="chip type-AUTO">' + esc(sheet.pjt) + "</span>" : "") + '<span class="sep">·</span><span>' + esc(sheet.location || "") + '</span><span class="sep">·</span><span class="chip dept">' + esc(sheet.dept) + "</span>" +
             (errorCount ? '<span class="chip error">OVER ' + errorCount + "건</span>" : '<span class="chip ok">기준 이내</span>') + "</div></div></div>" +
           '<div class="tabs">' + SHEET_TABS.map(function (t) {
             var badge = t.id === "issues" && issues.length ? '<span class="count">' + issues.length + "</span>"
@@ -1685,7 +1713,7 @@
         var sheet = state.sheets[code];
         b.disabled = true;
         store.addThread({
-          queryType: "MANUAL", majorProcess: sheet.dept, discipline: discipline, fieldLabel: issue.field,
+          queryType: "MANUAL", pjt: sheet.pjt, majorProcess: sheet.dept, discipline: discipline, fieldLabel: issue.field,
           asIsValue: String(items[issue.itemIdx][issue.field]), toBeValue: null,
           targets: [{ sheetCode: code, itemIdx: issue.itemIdx, field: issue.field }], status: "OPEN",
           title: "[문의] " + issue.field + " (" + code + ")", question: content,
@@ -1733,6 +1761,7 @@
   }
 
   function render() {
+    renderPjtSelect();
     renderUserSelect();
     renderPageNav();
     var main = document.getElementById("mainArea");
