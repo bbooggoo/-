@@ -1,3 +1,4 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found]){display:none!important}</style></head><body>
 <title>제원 질의 데스크</title>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Sans+KR:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
@@ -389,6 +390,132 @@
   ];
 
   // ===================================================================
+  // 대량 더미 데이터 채우기 (시드 고정 PRNG로 매번 동일하게 재현) —
+  // 위 두 데모 시트(PD000101/102)는 그대로 두고, 전체 대공정에 걸쳐
+  // 998개 제원표를 추가 생성해 총 1,000건을 채운다. 대공정/공종별
+  // 담당자도 전부 채워 자동 필터링·질의 생성이 실제처럼 동작하게 한다.
+  // ===================================================================
+  (function fillDummyData() {
+    function mulberry32(seed) {
+      var a = seed | 0;
+      return function () {
+        a = (a + 0x6D2B79F5) | 0;
+        var t = Math.imul(a ^ (a >>> 15), 1 | a);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    }
+    var rng = mulberry32(20260904);
+    function pick(arr) { return arr[Math.floor(rng() * arr.length)]; }
+    function chance(p) { return rng() < p; }
+    function randInt(min, max) { return Math.floor(rng() * (max - min + 1)) + min; }
+    function randFloat(min, max, decimals) {
+      var v = rng() * (max - min) + min;
+      var m = Math.pow(10, decimals == null ? 1 : decimals);
+      return Math.round(v * m) / m;
+    }
+
+    var GAS_STANDARD = ["N2", "O2", "AR", "CDA", "HE", "H2"];
+    var GAS_NONSTANDARD = ["GN2", "LN2", "질소", "N2 GAS"];
+    var SPGAS_MATERIALS = ["SiH4", "PH3", "WF6", "B2H6", "NF3", "C2F6", "AsH3", "GeH4", "HCl", "SiF4", "COS"];
+    var CHEM_SPECIES = ["IPA", "황산", "불산", "암모니아수", "과산화수소", "TMAH", "PR", "DEVELOPER", "BOE", "아세톤"];
+    var UPW_SPECIES = ["HOT DI", "COLD DI", "RO WATER", "DI WATER"];
+    var WATER_SPECIES = ["PCW", "ICW", "RCW"];
+    var WASTEWATER_SPECIES = ["IWW1", "IWW2", "AKWW", "OWW", "FWW"];
+    var EXHAUST_SPECIES = ["FUME", "VOC", "ACID EXHAUST", "ALKALI EXHAUST", "TOXIC EXHAUST", "GENERAL EXHAUST"];
+    var WASTE_MATERIALS = ["SiH4", "ACID WASTE", "ALKALI WASTE", "SOLVENT WASTE", "SLUDGE"];
+    var PIPE_MATERIALS = ["SUS316L", "SUS304", "PVC", "PVDF", "CPVC", "HDPE"];
+    var EQUIP_MODULES = ["MAIN", "SCRUBBER", "GAS CABINET", "SUB", "CDA UNIT", "CHILLER", "PUMP UNIT"];
+    var BUILDINGS = ["평택 · P3", "평택 · P4", "평택 · P5", "화성 · H1", "화성 · H2", "이천 · M14", "이천 · M16"];
+    var BUILDING_LETTERS = ["A", "B", "C", "D", "E", "F", "G", "H", "J", "K"];
+
+    function genGasItem() {
+      var nonstandard = chance(0.08);
+      var species = nonstandard ? pick(GAS_NONSTANDARD) : pick(GAS_STANDARD);
+      var canonicalKey = nonstandard ? (ALIAS_MAP[species] || species) : species;
+      var base = GAS_THRESHOLDS[canonicalKey] || 8;
+      var over = chance(0.1);
+      var flow = over ? randFloat(base + 1, base + 6, 1) : randFloat(Math.max(1, base - 6), base, 1);
+      return {
+        category: "GAS/AIR", 성상명: species, 유량: flow, 배관수량: randInt(1, 4),
+        압력: randFloat(2.5, 5.5, 1), 배관재질: pick(PIPE_MATERIALS), 설비모듈: pick(EQUIP_MODULES),
+      };
+    }
+    function genPowerItem() {
+      return chance(0.75)
+        ? { category: "POWER", 전원종류: "AC", 전력값: randInt(15, 120), 부하전류: randInt(20, 200), 전압: pick([220, 380, 440]), 차단기전류: pick([60, 100, 125, 150, 225]), 설비모듈: pick(EQUIP_MODULES) }
+        : { category: "POWER", 전원종류: "DC", 전력값: randInt(2, 15), 부하전류: randInt(3, 25), 전압: pick([12, 24, 48]), 차단기전류: pick([10, 15, 20]), 설비모듈: pick(EQUIP_MODULES) };
+    }
+    function genExhaustItem() {
+      return { category: "EXHAUST", 성상명: pick(EXHAUST_SPECIES), 풍량: randInt(5, 30), "포트 수량": randInt(1, 5), 설비모듈: pick(EQUIP_MODULES) };
+    }
+    function genSpGasItem() {
+      return { category: "SPECIALITY GAS", 자재명: pick(SPGAS_MATERIALS), 배관수량: randInt(1, 3), 유량: randFloat(0.5, 3, 1), 설비모듈: "GAS CABINET" };
+    }
+    function genWaterItem() {
+      return { category: "WATER", 성상명: pick(WATER_SPECIES), 유량: randInt(15, 60), 배관수량: randInt(1, 4), 압력: randFloat(3, 6, 1), 설비모듈: pick(EQUIP_MODULES) };
+    }
+    function genChemicalItem() {
+      return { category: "CHEMICAL", 성상명: pick(CHEM_SPECIES), 실사용량: randInt(20, 200) };
+    }
+    function genUpwItem() {
+      return { category: "UPW", 성상명: pick(UPW_SPECIES), 실사용량: randFloat(2, 15, 1), 설비모듈: pick(EQUIP_MODULES) };
+    }
+    function genWasteItem() {
+      return { category: "폐액", 자재명: pick(WASTE_MATERIALS), 실사용량: randFloat(0.5, 5, 1) };
+    }
+    function genWasteWaterItem() {
+      return { category: "WASTE WATER", 성상명: pick(WASTEWATER_SPECIES), 유량: randInt(5, 35), 배관수량: randInt(1, 3), 설비모듈: pick(EQUIP_MODULES) };
+    }
+    var GENERATORS = [
+      { gen: genGasItem, min: 2, max: 5, p: 1.0 },
+      { gen: genPowerItem, min: 1, max: 2, p: 0.95 },
+      { gen: genExhaustItem, min: 1, max: 2, p: 0.7 },
+      { gen: genSpGasItem, min: 1, max: 3, p: 0.55 },
+      { gen: genWaterItem, min: 1, max: 2, p: 0.8 },
+      { gen: genChemicalItem, min: 1, max: 2, p: 0.5 },
+      { gen: genUpwItem, min: 1, max: 1, p: 0.6 },
+      { gen: genWasteItem, min: 1, max: 1, p: 0.45 },
+      { gen: genWasteWaterItem, min: 1, max: 2, p: 0.65 },
+    ];
+    function genItems() {
+      var items = [];
+      GENERATORS.forEach(function (g) {
+        if (!chance(g.p)) return;
+        var n = randInt(g.min, g.max);
+        for (var i = 0; i < n; i++) items.push(g.gen());
+      });
+      return items.length ? items : [genGasItem()];
+    }
+
+    var extraSheets = [];
+    for (var i = 1; i <= 998; i++) {
+      var seq = 102 + i; // PD000101/102 다음부터 이어서 채번
+      var code = "PD" + String(seq).padStart(6, "0");
+      var dept = pick(MAJOR_PROCESSES);
+      var building = pick(BUILDINGS);
+      var letter = pick(BUILDING_LETTERS);
+      var floor = randInt(1, 6);
+      extraSheets.push({
+        code: code, dept: dept, title: dept + " 장비 " + letter + "동 제원표",
+        location: building + " · " + floor + "F", items: genItems(),
+      });
+    }
+    SEED_SHEETS = SEED_SHEETS.concat(extraSheets);
+
+    var extraOwners = [];
+    MAJOR_PROCESSES.forEach(function (mp) {
+      if (mp === "CVD" || mp === "ETCH") return; // 기존 시드에 이미 존재
+      extraOwners.push({ name: mp + " 담당자", role: "TECH_LEAD", majorProcesses: [mp], disciplines: [] });
+    });
+    DISCIPLINES.forEach(function (d) {
+      if (d.code === "PIPING") return; // 기존 시드에 이미 존재
+      extraOwners.push({ name: d.name + " 설계사", role: "DESIGNER", majorProcesses: [], disciplines: [d.code] });
+    });
+    SEED_OWNERS = SEED_OWNERS.concat(extraOwners);
+  })();
+
+  // ===================================================================
   // 유틸
   // ===================================================================
   function esc(s) {
@@ -429,6 +556,8 @@
     generating: false, genMessage: "",
     uploadResult: null, uploadBusy: false,
     lastUserIdForAutoFilter: undefined,
+    dbFilterMp: "", dbFilterCategory: "", dbSearch: "",
+    expandedVersion: null,
   };
 
   var store = null;
@@ -583,7 +712,7 @@
     var oldValue = it[field];
     it[field] = coerceValue(newValue);
     var newDoc = Object.assign({}, sheet, { items: items });
-    return store.setSheet(sheetCode, newDoc).then(function () {
+    return saveSheetVersion(sheetCode, newDoc, source).then(function () {
       return store.addCorrection({
         sheetCode: sheetCode, itemIdx: itemIdx, field: field, oldValue: String(oldValue == null ? "" : oldValue),
         newValue: String(newValue), source: source, threadId: threadId || null, appliedBy: (currentOwner() || {}).name || "익명", appliedAt: nowIso(),
@@ -820,10 +949,28 @@
       watchCorrections: function (cb) { return watchCollection(correctionsCol, cb); },
     };
   }
+  // ---- 건설코드별 버전 이력: spec_sheets 문서 안에 ver/versionHistory를 같이 저장해
+  // 별도 컬렉션 없이(문서 5,000개 한도 절약) 재업로드/질의 반영마다 이전 버전을 보존한다 ----
+  function saveSheetVersion(code, patchDoc, source) {
+    var prev = state.sheets[code];
+    var nextVer = prev ? (prev.ver || 1) + 1 : 1;
+    var history = prev ? (prev.versionHistory || []).slice() : [];
+    if (prev) {
+      history.unshift({
+        ver: prev.ver || 1, dept: prev.dept, title: prev.title, location: prev.location,
+        items: prev.items, versionSource: prev.versionSource || "SEED", archivedAt: nowIso(),
+      });
+      if (history.length > 20) history = history.slice(0, 20);
+    }
+    var newDoc = Object.assign({}, patchDoc, {
+      code: code, ver: nextVer, versionSource: source, updatedAt: nowIso(), versionHistory: history,
+    });
+    return store.setSheet(code, newDoc);
+  }
   function seedIfEmpty() {
     if (!store.isLive) {
       SEED_OWNERS.forEach(function (o) { store.addOwner(o); });
-      SEED_SHEETS.forEach(function (s) { store.setSheet(s.code, s); });
+      SEED_SHEETS.forEach(function (s) { saveSheetVersion(s.code, s, "SEED"); });
       return;
     }
     var lock = db.doc("system/seed_lock");
@@ -833,7 +980,7 @@
         var ownersEmpty = r[0], sheetsEmpty = r[1];
         var jobs = [];
         if (ownersEmpty) SEED_OWNERS.forEach(function (o) { jobs.push(store.addOwner(o)); });
-        if (sheetsEmpty) SEED_SHEETS.forEach(function (s) { jobs.push(store.setSheet(s.code, s)); });
+        if (sheetsEmpty) SEED_SHEETS.forEach(function (s) { jobs.push(saveSheetVersion(s.code, s, "SEED")); });
         return Promise.all(jobs);
       });
     }).catch(function () {});
@@ -846,6 +993,7 @@
   // ===================================================================
   var PAGES = [
     { id: "dashboard", label: "대시보드" },
+    { id: "db", label: "제원 DB" },
     { id: "summary", label: "SUMMARY" },
     { id: "queries", label: "질의응답" },
     { id: "upload", label: "제원표 업로드" },
@@ -925,7 +1073,7 @@
         : '<span class="chip ' + (errCount ? "error" : "warn") + '">미해결 ' + issues.length + "건</span>";
       return (
         '<tr class="clickable" data-code="' + esc(s.code) + '">' +
-          "<td><a class=\"code-link\" href=\"#\" data-code=\"" + esc(s.code) + "\">" + esc(s.code) + "</a></td>" +
+          "<td><a class=\"code-link\" href=\"#\" data-code=\"" + esc(s.code) + "\">" + esc(s.code) + "</a> <span class=\"chip neutral\">v" + (s.ver || 1) + "</span></td>" +
           "<td><span class=\"chip dept\">" + esc(s.dept) + "</span></td>" +
           "<td>" + esc(s.title || "") + "</td>" +
           "<td class=\"muted\">" + esc(s.location || "") + "</td>" +
@@ -965,6 +1113,72 @@
   function openSheet(code) {
     state.page = "sheet"; state.selectedSheet = code; state.activeTab = "items"; state.composerFor = null;
     render();
+  }
+
+  // ===================================================================
+  // 제원 DB (업로드된 모든 제원표의 항목을 한 표로 조회하는 화면)
+  // ===================================================================
+  var DB_ROW_LIMIT = 500;
+  function renderDbPage(main) {
+    var q = (state.dbSearch || "").trim().toLowerCase();
+    var allRows = [];
+    sheetList().slice().sort(function (a, b) { return a.code.localeCompare(b.code); }).forEach(function (s) {
+      if (state.dbFilterMp && s.dept !== state.dbFilterMp) return;
+      (s.items || []).forEach(function (it, idx) {
+        if (state.dbFilterCategory && it.category !== state.dbFilterCategory) return;
+        var keyField = it.성상명 || it.전원종류 || it.자재명 || "-";
+        if (q) {
+          var hay = (s.code + " " + keyField + " " + (it.설비모듈 || "")).toLowerCase();
+          if (hay.indexOf(q) === -1) return;
+        }
+        allRows.push({ sheet: s, it: it, keyField: keyField });
+      });
+    });
+    var total = allRows.length;
+    var rows = allRows.slice(0, DB_ROW_LIMIT);
+    var tableRows = rows.map(function (r) {
+      var it = r.it, s = r.sheet;
+      var specBits = [];
+      ["유량", "배관수량", "압력", "배관재질", "전력값", "부하전류", "전압", "차단기전류", "실사용량", "풍량", "포트 수량"].forEach(function (f) {
+        if (it[f] != null) specBits.push(f + " " + (typeof it[f] === "number" ? fmtNum(it[f]) : it[f]));
+      });
+      return (
+        '<tr class="clickable" data-code="' + esc(s.code) + '">' +
+          "<td><a class=\"code-link\" href=\"#\" data-code=\"" + esc(s.code) + "\">" + esc(s.code) + "</a> <span class=\"chip neutral\">v" + (s.ver || 1) + "</span></td>" +
+          "<td><span class=\"chip dept\">" + esc(s.dept) + "</span></td>" +
+          "<td>" + esc(it.category) + "</td>" +
+          "<td>" + esc(r.keyField) + "</td>" +
+          "<td class=\"muted\" style=\"font-size:11.5px\">" + esc(specBits.join(" · ")) + "</td>" +
+          "<td class=\"muted\">" + esc(it.설비모듈 || "") + "</td>" +
+        "</tr>"
+      );
+    }).join("");
+    main.innerHTML =
+      '<div class="page">' +
+        "<h1 style=\"font-size:19px;margin-bottom:4px\">제원 DB</h1>" +
+        '<p style="font-size:12.5px;color:var(--ink-muted);margin:0 0 16px">업로드된 모든 제원표의 항목을 하나의 표(DB 조회 화면)로 봅니다. 각 행은 한 제원표 안의 항목 하나이며, 건설코드 옆 v{n}은 그 제원표의 현재 버전입니다.</p>' +
+        '<div class="panel"><div class="filter-bar">' +
+          '<div class="field"><label class="field-label">대공정</label><select id="dbMp"><option value="">전체</option>' +
+            MAJOR_PROCESSES.map(function (mp) { return '<option value="' + mp + '"' + (state.dbFilterMp === mp ? " selected" : "") + ">" + mp + "</option>"; }).join("") +
+          "</select></div>" +
+          '<div class="field"><label class="field-label">대분류</label><select id="dbCategory"><option value="">전체</option>' +
+            CAT_ORDER.map(function (c) { return '<option value="' + c + '"' + (state.dbFilterCategory === c ? " selected" : "") + ">" + c + "</option>"; }).join("") +
+          "</select></div>" +
+          '<div class="field grow"><label class="field-label">검색 (건설코드/항목명/설비모듈)</label><input class="text" id="dbSearch" value="' + esc(state.dbSearch) + '" placeholder="예: PD0001, N2, SCRUBBER"></div>' +
+        "</div></div>" +
+        '<div class="panel">' +
+          '<p style="font-size:12px;color:var(--ink-muted);margin:0 0 10px">총 ' + total + "건" + (total > DB_ROW_LIMIT ? " 중 상위 " + DB_ROW_LIMIT + "건만 표시 — 검색/필터로 좁혀 보세요." : "") + "</p>" +
+          (tableRows
+            ? '<div style="overflow-x:auto"><table class="sheet-table"><thead><tr><th>건설코드</th><th>대공정</th><th>대분류</th><th>항목명</th><th>주요 값</th><th>설비모듈</th></tr></thead><tbody>' + tableRows + "</tbody></table></div>"
+            : '<div class="empty-state"><div class="big">🗄</div>조건에 맞는 항목이 없습니다.</div>') +
+        "</div>" +
+      "</div>";
+    document.getElementById("dbMp").onchange = function (e) { state.dbFilterMp = e.target.value; render(); };
+    document.getElementById("dbCategory").onchange = function (e) { state.dbFilterCategory = e.target.value; render(); };
+    document.getElementById("dbSearch").onchange = function (e) { state.dbSearch = e.target.value; render(); };
+    Array.prototype.forEach.call(main.querySelectorAll("[data-code]"), function (el) {
+      el.addEventListener("click", function (e) { e.preventDefault(); openSheet(el.dataset.code); });
+    });
   }
 
   // ===================================================================
@@ -1223,10 +1437,10 @@
       if (groups.length > 200) { parsed.warnings.push("그룹이 너무 많아(" + groups.length + "건) 처음 200건만 반영했습니다."); groups = groups.slice(0, 200); }
       var owner = currentOwner();
       return Promise.all(groups.map(function (g) {
-        return store.setSheet(g.code, {
+        return saveSheetVersion(g.code, {
           code: g.code, dept: g.dept, title: g.dept + " " + g.code, location: g.location, items: g.items,
           uploadedBy: owner ? owner.name : "관리자", uploadedAt: nowIso(),
-        });
+        }, "UPLOAD");
       })).then(function () {
         state.uploadResult = { count: groups.length, warnings: parsed.warnings, codes: groups.map(function (g) { return g.code; }) };
       });
@@ -1298,6 +1512,7 @@
     { id: "agg", label: "총량 집계" },
     { id: "qa", label: "관련 질의" },
     { id: "corrections", label: "수정 이력" },
+    { id: "versions", label: "버전 이력" },
   ];
   function renderSheetPage(main) {
     var codes = Object.keys(state.sheets).sort();
@@ -1320,7 +1535,7 @@
         '<button class="sheet-card' + (c === code ? " active" : "") + '" data-goto-sheet="' + c + '">' +
           '<div class="row2"><span class="code">' + c + "</span>" + chip + "</div>" +
           '<div style="font-size:12px;color:var(--ink-muted)">' + esc(s.title || "") + "</div>" +
-          '<div class="row2"><span class="chip dept">' + esc(s.dept) + "</span></div>" +
+          '<div class="row2"><span class="chip dept">' + esc(s.dept) + "</span><span class=\"chip neutral\">v" + (s.ver || 1) + "</span></div>" +
         "</button>"
       );
     }).join("");
@@ -1329,10 +1544,12 @@
       '<div class="shell">' +
         '<div class="panel" style="padding:0"><div class="rail-head"><div class="rail-head-row"><h2>제원표</h2></div></div><div class="rail-list">' + railHtml + "</div></div>" +
         '<div class="panel" style="padding:0">' +
-          '<div class="workspace-head"><div><h1>' + esc(sheet.title || code) + "</h1><div class=\"meta\"><span class=\"num\">" + code + '</span><span class="sep">·</span><span>' + esc(sheet.location || "") + '</span><span class="sep">·</span><span class="chip dept">' + esc(sheet.dept) + "</span>" +
+          '<div class="workspace-head"><div><h1>' + esc(sheet.title || code) + "</h1><div class=\"meta\"><span class=\"num\">" + code + '</span><span class="chip neutral">v' + (sheet.ver || 1) + '</span><span class="sep">·</span><span>' + esc(sheet.location || "") + '</span><span class="sep">·</span><span class="chip dept">' + esc(sheet.dept) + "</span>" +
             (errorCount ? '<span class="chip error">OVER ' + errorCount + "건</span>" : '<span class="chip ok">기준 이내</span>') + "</div></div></div>" +
           '<div class="tabs">' + SHEET_TABS.map(function (t) {
-            var badge = t.id === "issues" && issues.length ? '<span class="count">' + issues.length + "</span>" : (t.id === "qa" && relatedThreads.length ? '<span class="count">' + relatedThreads.length + "</span>" : "");
+            var badge = t.id === "issues" && issues.length ? '<span class="count">' + issues.length + "</span>"
+              : t.id === "qa" && relatedThreads.length ? '<span class="count">' + relatedThreads.length + "</span>"
+              : t.id === "versions" && (sheet.versionHistory || []).length ? '<span class="count">' + (sheet.versionHistory || []).length + "</span>" : "";
             return '<button class="tab' + (state.activeTab === t.id ? " active" : "") + (t.id === "issues" && errorCount ? " has-error" : "") + '" data-tab="' + t.id + '">' + t.label + badge + "</button>";
           }).join("") + "</div>" +
           '<div class="tab-panel" id="sheetTabPanel">' +
@@ -1340,6 +1557,7 @@
               : state.activeTab === "issues" ? renderIssuesTab(issues, items, code)
               : state.activeTab === "agg" ? renderAggTab(agg)
               : state.activeTab === "qa" ? renderRelatedQaTab(relatedThreads)
+              : state.activeTab === "versions" ? renderVersionsTab(sheet)
               : renderCorrectionsTab(corrections)) +
           "</div>" +
         "</div>" +
@@ -1348,6 +1566,7 @@
     Array.prototype.forEach.call(main.querySelectorAll("[data-goto-sheet]"), function (b) { b.onclick = function () { state.selectedSheet = b.dataset.gotoSheet; state.activeTab = "items"; state.composerFor = null; render(); }; });
     Array.prototype.forEach.call(main.querySelectorAll(".tab"), function (b) { b.onclick = function () { state.activeTab = b.dataset.tab; state.composerFor = null; render(); }; });
     wireSheetTabEvents(main, code, issues, items);
+    wireVersionsTabEvents(main);
   }
   function renderItemsTab(items, issues) {
     var flagByItem = {};
@@ -1427,6 +1646,30 @@
     }).join("");
     return '<div style="overflow-x:auto"><table class="corr-table"><thead><tr><th>필드</th><th>변경</th><th>출처</th><th>처리자</th><th>일시</th></tr></thead><tbody>' + rows + "</tbody></table></div>";
   }
+  function versionSourceLabel(src) {
+    return src === "SEED" ? "시드 데이터" : src === "UPLOAD" ? "엑셀 재업로드" : src === "AUTO" ? "자동 질의 반영" : src === "MANUAL" ? "수동 질의 반영" : (src || "-");
+  }
+  function renderVersionsTab(sheet) {
+    var history = sheet.versionHistory || [];
+    var current =
+      '<div class="thread-card" style="cursor:default"><span class="chip ok">v' + (sheet.ver || 1) + " · 현재</span> <span class=\"chip type-" +
+        (sheet.versionSource === "UPLOAD" ? "MANUAL" : "AUTO") + '">' + esc(versionSourceLabel(sheet.versionSource)) + "</span>" +
+        '<div class="t-meta" style="margin-top:6px">' + (sheet.items || []).length + "건 · " + fmtTime(sheet.updatedAt) + "</div></div>";
+    if (!history.length) {
+      return current + '<p class="auto-note" style="margin-top:10px">이전 버전이 없습니다. 이 제원표가 재업로드되거나 질의 승인으로 값이 바뀌면 이전 상태가 여기 버전 이력으로 남습니다.</p>';
+    }
+    var rows = history.map(function (v) {
+      var expanded = state.expandedVersion === v.ver;
+      return (
+        '<div class="thread-card" style="cursor:default">' +
+          '<div class="row2"><span class="chip neutral">v' + v.ver + '</span> <button class="btn small" data-toggle-version="' + v.ver + '">' + (expanded ? "접기" : "항목 보기") + "</button></div>" +
+          '<div class="t-meta" style="margin-top:6px">' + esc(versionSourceLabel(v.versionSource)) + " · " + (v.items || []).length + "건 · " + fmtTime(v.archivedAt) + "</div>" +
+          (expanded ? '<div style="margin-top:10px">' + renderItemsTab(v.items || [], []) + "</div>" : "") +
+        "</div>"
+      );
+    }).join("");
+    return current + '<div style="margin-top:10px">' + rows + "</div>";
+  }
   function wireSheetTabEvents(main, code, issues, items) {
     Array.prototype.forEach.call(main.querySelectorAll("[data-ask]"), function (b) { b.onclick = function () { state.composerFor = b.dataset.ask; render(); }; });
     Array.prototype.forEach.call(main.querySelectorAll("[data-cancel-question]"), function (b) { b.onclick = function () { state.composerFor = null; render(); }; });
@@ -1449,6 +1692,15 @@
           createdBy: owner ? owner.name : "익명", createdAt: nowIso(), updatedAt: nowIso(),
           assignedOwnerName: pickTechLeadFor(sheet.dept), messages: [],
         }).then(function () { state.composerFor = null; render(); });
+      };
+    });
+  }
+  function wireVersionsTabEvents(main) {
+    Array.prototype.forEach.call(main.querySelectorAll("[data-toggle-version]"), function (b) {
+      b.onclick = function () {
+        var v = +b.dataset.toggleVersion;
+        state.expandedVersion = state.expandedVersion === v ? null : v;
+        render();
       };
     });
   }
@@ -1485,6 +1737,7 @@
     renderPageNav();
     var main = document.getElementById("mainArea");
     if (state.page === "dashboard") renderDashboard(main);
+    else if (state.page === "db") renderDbPage(main);
     else if (state.page === "summary") renderSummaryPage(main);
     else if (state.page === "queries") renderQueriesPage(main);
     else if (state.page === "upload") renderUploadPage(main);
@@ -1503,3 +1756,5 @@
   setTimeout(function () { if (!store.isLive) { setLive(false, "로컬 모드 (이 브라우저만)"); document.getElementById("banner").innerHTML = '<div class="banner">실시간 공유 저장소에 연결하지 못해 로컬 모드로 동작합니다. 이 브라우저 세션에서만 데이터가 유지됩니다.</div>'; } }, 3000);
 })();
 </script>
+
+</body></html>
