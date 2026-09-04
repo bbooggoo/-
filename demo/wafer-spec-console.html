@@ -1,0 +1,1383 @@
+<title>웨이퍼 제원 콘솔</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Sans+KR:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  :root {
+    --bg: #eef3f4;
+    --surface: #ffffff;
+    --surface-2: #f5f9fa;
+    --ink: #0f2429;
+    --ink-muted: #4c6469;
+    --ink-faint: #7c9297;
+    --border: #d7e2e3;
+    --border-strong: #b9c9cb;
+    --accent: #0e7c86;
+    --accent-strong: #0a5f68;
+    --accent-soft: #dcf0ef;
+    --ok: #1f8a55;
+    --ok-soft: #e2f5e9;
+    --warn: #a9660f;
+    --warn-soft: #fbedd8;
+    --error: #b3412c;
+    --error-soft: #fbe6e1;
+    --shadow: 0 1px 2px rgba(15,36,41,0.06), 0 8px 24px -12px rgba(15,36,41,0.18);
+    --sans: "IBM Plex Sans", "IBM Plex Sans KR", -apple-system, "Malgun Gothic", sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, monospace;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0b1517;
+      --surface: #111f22;
+      --surface-2: #16262a;
+      --ink: #e4eef0;
+      --ink-muted: #9db3b8;
+      --ink-faint: #6c8388;
+      --border: #23383c;
+      --border-strong: #304a4f;
+      --accent: #35c4bd;
+      --accent-strong: #5fd9d2;
+      --accent-soft: #123531;
+      --ok: #4fbf87;
+      --ok-soft: #133226;
+      --warn: #dba24d;
+      --warn-soft: #3a2c15;
+      --error: #e28374;
+      --error-soft: #3a1f19;
+      --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px -12px rgba(0,0,0,0.5);
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0b1517;
+    --surface: #111f22;
+    --surface-2: #16262a;
+    --ink: #e4eef0;
+    --ink-muted: #9db3b8;
+    --ink-faint: #6c8388;
+    --border: #23383c;
+    --border-strong: #304a4f;
+    --accent: #35c4bd;
+    --accent-strong: #5fd9d2;
+    --accent-soft: #123531;
+    --ok: #4fbf87;
+    --ok-soft: #133226;
+    --warn: #dba24d;
+    --warn-soft: #3a2c15;
+    --error: #e28374;
+    --error-soft: #3a1f19;
+    --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px -12px rgba(0,0,0,0.5);
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  h1, h2, h3 { text-wrap: balance; margin: 0; }
+  table { border-collapse: collapse; }
+  ::selection { background: var(--accent-soft); }
+
+  .num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+  }
+
+  /* ---------------- topbar ---------------- */
+  .topbar {
+    position: sticky; top: 0; z-index: 20;
+    display: flex; align-items: center; gap: 16px;
+    padding: 12px 20px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+  }
+  .brand { display: flex; align-items: center; gap: 10px; }
+  .brand svg { flex: none; }
+  .brand-text { display: flex; flex-direction: column; gap: 1px; }
+  .brand-text .name { font-weight: 700; font-size: 15px; letter-spacing: -0.01em; }
+  .brand-text .tag { font-family: var(--mono); font-size: 10px; letter-spacing: 0.08em; color: var(--ink-faint); text-transform: uppercase; }
+  .topbar .spacer { flex: 1; }
+  .live-pill {
+    display: flex; align-items: center; gap: 6px;
+    font-family: var(--mono); font-size: 11px; color: var(--ink-muted);
+    padding: 5px 10px; border-radius: 999px; border: 1px solid var(--border);
+  }
+  .live-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ink-faint); }
+  .live-pill.on .live-dot { background: var(--ok); box-shadow: 0 0 0 3px var(--ok-soft); }
+  select.user-select {
+    font-family: var(--sans); font-size: 13px; font-weight: 500;
+    color: var(--ink); background: var(--surface-2);
+    border: 1px solid var(--border); border-radius: 8px;
+    padding: 7px 32px 7px 12px; cursor: pointer;
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%234c6469' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 12px center;
+  }
+  select.user-select:focus-visible, button:focus-visible, .tab:focus-visible, .chip-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+  /* ---------------- shell ---------------- */
+  .shell {
+    display: grid; grid-template-columns: 300px 1fr; gap: 16px;
+    max-width: 1240px; margin: 0 auto; padding: 20px;
+    align-items: start;
+  }
+  @media (max-width: 860px) { .shell { grid-template-columns: 1fr; } }
+
+  .panel {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+    box-shadow: var(--shadow);
+  }
+  .rail-head { padding: 14px 16px 8px; }
+  .rail-head h2 { font-size: 13px; font-weight: 600; }
+  .rail-list { display: flex; flex-direction: column; gap: 10px; padding: 4px 12px 14px; }
+
+  .sheet-card {
+    text-align: left; width: 100%; cursor: pointer;
+    background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px;
+    padding: 12px 14px; display: flex; flex-direction: column; gap: 8px;
+    font-family: var(--sans); color: var(--ink);
+  }
+  .sheet-card:hover { border-color: var(--border-strong); }
+  .sheet-card.active { background: var(--accent-soft); border-color: var(--accent); }
+  .sheet-card .code { font-family: var(--mono); font-weight: 600; font-size: 14px; letter-spacing: -0.01em; }
+  .sheet-card .loc { font-size: 12px; color: var(--ink-muted); }
+  .sheet-card .row2 { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+
+  .chip {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: 999px;
+    white-space: nowrap;
+  }
+  .chip.dept { background: var(--surface); border: 1px solid var(--border-strong); color: var(--ink-muted); font-family: var(--mono); letter-spacing: 0.02em; }
+  .chip.ok { background: var(--ok-soft); color: var(--ok); }
+  .chip.error { background: var(--error-soft); color: var(--error); }
+  .chip.warn { background: var(--warn-soft); color: var(--warn); }
+  .chip.neutral { background: var(--surface); border: 1px solid var(--border-strong); color: var(--ink-muted); }
+
+  /* ---------------- workspace ---------------- */
+  .workspace-head { padding: 18px 20px 14px; border-bottom: 1px solid var(--border); display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+  .workspace-head h1 { font-size: 19px; font-weight: 700; }
+  .workspace-head .meta { margin-top: 4px; font-size: 12.5px; color: var(--ink-muted); display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+  .workspace-head .meta .sep { color: var(--border-strong); }
+  .owner-badge { display: flex; align-items: center; gap: 8px; }
+  .owner-badge .avatar {
+    width: 26px; height: 26px; border-radius: 50%; background: var(--accent);
+    color: white; font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center;
+  }
+
+  .tabs { display: flex; gap: 2px; padding: 10px 16px 0; border-bottom: 1px solid var(--border); overflow-x: auto; }
+  .tab {
+    font-family: var(--sans); font-size: 12.5px; font-weight: 600; color: var(--ink-muted);
+    background: none; border: none; padding: 9px 14px; border-radius: 8px 8px 0 0; cursor: pointer;
+    display: flex; align-items: center; gap: 6px; white-space: nowrap;
+  }
+  .tab:hover { color: var(--ink); background: var(--surface-2); }
+  .tab.active { color: var(--accent-strong); background: var(--surface-2); box-shadow: inset 0 -2px 0 var(--accent); }
+  .tab .count { font-family: var(--mono); font-size: 10.5px; background: var(--surface); border: 1px solid var(--border-strong); padding: 0 6px; border-radius: 999px; }
+  .tab.has-error .count { background: var(--error-soft); color: var(--error); border-color: transparent; }
+
+  .tab-panel { padding: 18px 20px 22px; }
+
+  /* items */
+  .item-group { margin-bottom: 18px; }
+  .item-group:last-child { margin-bottom: 0; }
+  .item-group .cat-label { font-size: 12px; font-weight: 700; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
+  .item-group .cat-label .swatch { width: 8px; height: 8px; border-radius: 2px; background: var(--accent); }
+  .item-row {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 9px 12px; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 6px;
+    background: var(--surface-2);
+  }
+  .item-row.flagged-ERROR { border-color: var(--error); background: var(--error-soft); }
+  .item-row.flagged-WARN { border-color: var(--warn); background: var(--warn-soft); }
+  .item-row .key { font-weight: 600; font-size: 13px; min-width: 90px; }
+  .item-row .specs { display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px; color: var(--ink-muted); }
+  .item-row .specs b { font-family: var(--mono); color: var(--ink); font-weight: 600; }
+
+  /* validation */
+  .issue-card {
+    display: flex; gap: 12px; padding: 12px 14px; border-radius: 10px; margin-bottom: 10px;
+    border: 1px solid var(--border); border-left: 4px solid var(--ink-faint);
+  }
+  .issue-card.ERROR { border-left-color: var(--error); background: var(--error-soft); }
+  .issue-card.WARN { border-left-color: var(--warn); background: var(--warn-soft); }
+  .issue-card .body { flex: 1; min-width: 0; }
+  .issue-card .msg { font-size: 13px; font-weight: 500; }
+  .issue-card .sub { font-size: 11.5px; color: var(--ink-muted); margin-top: 3px; }
+  .issue-card .actions { flex: none; }
+  .empty-state { padding: 28px 10px; text-align: center; color: var(--ink-faint); font-size: 13px; }
+  .empty-state .big { font-size: 28px; margin-bottom: 6px; }
+
+  /* aggregation */
+  .agg-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
+  .agg-card { border: 1px solid var(--border); border-radius: 10px; padding: 14px; background: var(--surface-2); }
+  .agg-card .cat { font-weight: 700; font-size: 13px; }
+  .agg-card .unit { font-family: var(--mono); font-size: 10.5px; color: var(--ink-faint); text-transform: uppercase; letter-spacing: 0.04em; }
+  .agg-card .rows { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+  .agg-card .row { display: flex; justify-content: space-between; align-items: baseline; font-size: 12.5px; gap: 8px; }
+  .agg-card .row .g { color: var(--ink-muted); }
+  .agg-card .row .v { font-family: var(--mono); font-weight: 600; }
+  .agg-card .total { margin-top: 10px; padding-top: 9px; border-top: 1px dashed var(--border-strong); display: flex; justify-content: space-between; font-size: 13px; font-weight: 700; }
+
+  /* buttons */
+  .btn {
+    font-family: var(--sans); font-size: 12.5px; font-weight: 600;
+    padding: 7px 13px; border-radius: 7px; border: 1px solid var(--border-strong);
+    background: var(--surface); color: var(--ink); cursor: pointer;
+  }
+  .btn:hover { background: var(--surface-2); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: white; }
+  .btn.primary:hover { background: var(--accent-strong); }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn.small { padding: 5px 10px; font-size: 11.5px; }
+
+  textarea, input.text {
+    width: 100%; font-family: var(--sans); font-size: 13px; color: var(--ink);
+    background: var(--surface); border: 1px solid var(--border-strong); border-radius: 8px;
+    padding: 8px 10px; resize: vertical;
+  }
+  textarea:focus-visible, input.text:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  label.field-label { font-size: 11px; font-weight: 600; color: var(--ink-muted); display: block; margin-bottom: 4px; }
+
+  /* qa */
+  .thread-card { border: 1px solid var(--border); border-radius: 10px; padding: 14px; margin-bottom: 12px; background: var(--surface-2); }
+  .thread-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+  .thread-head .t-title { font-weight: 600; font-size: 13px; }
+  .thread-head .t-meta { font-size: 11px; color: var(--ink-faint); margin-top: 2px; }
+  .msg-bubble { margin-top: 10px; padding: 9px 11px; border-radius: 8px; background: var(--surface); border: 1px solid var(--border); font-size: 12.5px; }
+  .msg-bubble.answer { background: var(--ok-soft); border-color: transparent; }
+  .msg-bubble .m-meta { font-size: 10.5px; color: var(--ink-faint); margin-bottom: 3px; font-family: var(--mono); }
+  .thread-form { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+  .thread-form .row { display: flex; gap: 8px; }
+  .thread-form .row textarea { flex: 1; }
+  .gate-note { font-size: 11.5px; color: var(--ink-faint); margin-top: 10px; padding: 8px 10px; background: var(--surface); border-radius: 7px; border: 1px dashed var(--border-strong); }
+
+  /* corrections */
+  .corr-table { width: 100%; font-size: 12.5px; }
+  .corr-table th { text-align: left; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--ink-faint); font-weight: 600; padding: 0 10px 8px; border-bottom: 1px solid var(--border); }
+  .corr-table td { padding: 9px 10px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  .corr-table tr:last-child td { border-bottom: none; }
+  .corr-table .arrow { color: var(--ink-faint); margin: 0 6px; }
+  .corr-table .old { color: var(--error); text-decoration: line-through; font-family: var(--mono); }
+  .corr-table .new { color: var(--ok); font-weight: 700; font-family: var(--mono); }
+
+  .banner {
+    margin: 14px 20px 0; padding: 9px 13px; border-radius: 8px; font-size: 12px;
+    background: var(--warn-soft); color: var(--warn); border: 1px solid transparent;
+  }
+
+  .footer-note { max-width: 1240px; margin: 4px auto 32px; padding: 0 20px; font-size: 11.5px; color: var(--ink-faint); }
+  .footer-note a { color: var(--ink-muted); }
+
+  /* upload */
+  .rail-head-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  select, .upload-form input.text, .upload-form input[type="file"] {
+    font-family: var(--sans); font-size: 13px; color: var(--ink);
+    background: var(--surface); border: 1px solid var(--border-strong); border-radius: 8px;
+    padding: 8px 10px; width: 100%;
+  }
+  .field-row { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+  .field-row .field { flex: 1; min-width: 200px; }
+  .upload-intro { font-size: 13px; color: var(--ink-muted); margin: 0 0 16px; max-width: 62ch; }
+  .upload-result-ok { background: var(--ok-soft); color: var(--ok); border-radius: 8px; padding: 9px 13px; font-size: 12.5px; margin-bottom: 8px; }
+  .upload-result-error { background: var(--error-soft); color: var(--error); border-radius: 8px; padding: 9px 13px; font-size: 12.5px; }
+  .upload-result-warn { font-size: 12px; color: var(--warn); margin: 0 0 8px; padding-left: 18px; }
+</style>
+
+<div class="topbar">
+  <div class="brand">
+    <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+      <rect x="7" y="7" width="14" height="14" rx="2" stroke="var(--accent)" stroke-width="2"/>
+      <rect x="11.5" y="11.5" width="5" height="5" rx="0.5" fill="var(--accent)"/>
+      <g stroke="var(--accent)" stroke-width="1.6" stroke-linecap="round">
+        <path d="M10 2v3M14 2v3M18 2v3M10 23v3M14 23v3M18 23v3"/>
+        <path d="M2 10h3M2 14h3M2 18h3M23 10h3M23 14h3M23 18h3"/>
+      </g>
+    </svg>
+    <div class="brand-text">
+      <div class="name">웨이퍼 제원 콘솔</div>
+      <div class="tag">Spec Verification Demo</div>
+    </div>
+  </div>
+  <div class="spacer"></div>
+  <div class="live-pill" id="livePill"><span class="live-dot"></span><span id="liveLabel">연결 확인 중</span></div>
+  <select class="user-select" id="userSelect" aria-label="현재 작업자 선택"></select>
+</div>
+
+<div id="banner"></div>
+
+<div class="shell">
+  <div class="panel rail">
+    <div class="rail-head">
+      <div class="rail-head-row">
+        <h2>제원표</h2>
+        <button class="btn small primary" id="newUploadBtn">+ 업로드</button>
+      </div>
+      <div class="eyebrow" id="sheetCountLabel" style="margin-top:6px">불러오는 중...</div>
+    </div>
+    <div class="rail-list" id="sheetList"></div>
+  </div>
+
+  <div class="panel workspace">
+    <div class="workspace-head" id="workspaceHead"></div>
+    <div class="tabs" id="tabs"></div>
+    <div class="tab-panel" id="tabPanel"></div>
+  </div>
+</div>
+
+<div class="footer-note">
+  실제 백엔드와 동일한 파서(헤더 자동 인식·건설코드 그룹핑·대공정 판별)·검증·집계 로직을 브라우저에서 그대로 재현한 데모입니다.
+  왼쪽 "+ 업로드"로 로컬 엑셀 파일을 직접 올려볼 수 있고, 질의응답·수정 이력·업로드한 제원표는 이 페이지의 공유 저장소에 실시간으로 기록됩니다.
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  // ---------------------------------------------------------------
+  // 데모 데이터 (실제 API로 검증한 값과 동일: 건설코드 PD000101/PD000102)
+  // ---------------------------------------------------------------
+  var CAT_ORDER = ["GAS/AIR", "POWER", "EXHAUST", "SPECIALITY GAS", "WATER", "CHEMICAL", "UPW", "폐액", "WASTE WATER"];
+
+  var SHEETS = {
+    PD000101: { code: "PD000101", dept: "CVD", title: "CVD 장비 A동 제원표", location: "평택 · P4 · 3F", equipCount: 1, ownerName: "CVD 담당자" },
+    PD000102: { code: "PD000102", dept: "ETCH", title: "ETCH 장비 B동 제원표", location: "평택 · P4 · 4F", equipCount: 2, ownerName: "ETCH 담당자" },
+  };
+
+  var ITEMS = {
+    PD000101: [
+      { category: "GAS/AIR", 성상명: "N2", 유량: 9, 배관수량: 2, 압력: 3.5, 배관재질: "SUS316L", 설비모듈: "SCRUBBER" },
+      { category: "GAS/AIR", 성상명: "O2", 유량: 8, 배관수량: 1, 압력: 3.0, 배관재질: "SUS316L", 설비모듈: "SCRUBBER" },
+      { category: "GAS/AIR", 성상명: "CDA", 유량: 6, 배관수량: 2, 압력: 4.0, 배관재질: "SUS316L", 설비모듈: "SCRUBBER" },
+      { category: "GAS/AIR", 성상명: "질소", 유량: 4, 배관수량: 2, 압력: 3.2, 배관재질: "SUS316L", 설비모듈: "SCRUBBER" },
+      { category: "POWER", 전원종류: "AC", 전력값: 45, 부하전류: 68, 전압: 380, 차단기전류: 100, 설비모듈: "MAIN" },
+      { category: "POWER", 전원종류: "AC", 전력값: 15, 부하전류: 22, 전압: 220, 차단기전류: 30, 설비모듈: "SUB" },
+      { category: "POWER", 전원종류: "DC", 전력값: 5, 부하전류: 8, 전압: 24, 차단기전류: 10, 설비모듈: "MAIN" },
+      { category: "EXHAUST", 성상명: "FUME", 풍량: 12, "포트 수량": 2, 설비모듈: "MAIN" },
+      { category: "SPECIALITY GAS", 자재명: "SiH4", 배관수량: 1, 유량: 2, 설비모듈: "GAS CABINET" },
+      { category: "SPECIALITY GAS", 자재명: "PH3", 배관수량: 1, 유량: 1, 설비모듈: "GAS CABINET" },
+      { category: "WATER", 성상명: "PCW", 유량: 40, 배관수량: 2, 압력: 5, 설비모듈: "MAIN" },
+      { category: "CHEMICAL", 성상명: "IPA", 실사용량: 120 },
+      { category: "UPW", 성상명: "HOT DI", 실사용량: 8.5, 설비모듈: "MAIN" },
+      { category: "UPW", 성상명: "COOL DI", 실사용량: 3.2, 설비모듈: "MAIN" },
+      { category: "UPW", 성상명: "고압 DI", 실사용량: 1.1, 설비모듈: "MAIN" },
+      { category: "폐액", 자재명: "산폐액", 실사용량: 2.4 },
+      { category: "WASTE WATER", 성상명: "IWW1", 유량: 25, 배관수량: 1, 설비모듈: "MAIN" },
+      { category: "WASTE WATER", 성상명: "IWW2", 유량: 10, 배관수량: 1, 설비모듈: "MAIN" },
+    ],
+    PD000102: [
+      { category: "GAS/AIR", 성상명: "AR", 유량: 7, 배관수량: 3, 압력: 3.8, 배관재질: "SUS316L", 설비모듈: "SCRUBBER" },
+      { category: "GAS/AIR", 성상명: "H2", 유량: 5, 배관수량: 2, 압력: 3.0, 배관재질: "SUS316L", 설비모듈: "SCRUBBER" },
+      { category: "POWER", 전원종류: "AC", 전력값: 60, 부하전류: 90, 전압: 380, 차단기전류: 125, 설비모듈: "MAIN" },
+      { category: "EXHAUST", 성상명: "VOC", 풍량: 15, "포트 수량": 3, 설비모듈: "MAIN" },
+      { category: "WATER", 성상명: "PCW", 유량: 35, 배관수량: 3, 압력: 5.5, 설비모듈: "MAIN" },
+      { category: "CHEMICAL", 성상명: "황산", 실사용량: 80 },
+      { category: "UPW", 성상명: "HOT DI", 실사용량: 6.0, 설비모듈: "MAIN" },
+      { category: "폐액", 자재명: "산폐액", 실사용량: 1.8 },
+      { category: "WASTE WATER", 성상명: "AKWW", 유량: 18, 배관수량: 1, 설비모듈: "MAIN" },
+      { category: "SPECIALITY GAS", 자재명: "WF6", 배관수량: 1, 유량: 1, 설비모듈: "GAS CABINET" },
+    ],
+  };
+
+  // 백엔드 app/models.py 의 MAJOR_PROCESS_SEED 와 동일한 13개 대공정
+  var MAJOR_PROCESSES = [
+    "PHOTO", "CVD", "ETCH", "METAL", "CMP", "IMP", "DIFF", "PMTC", "EDS", "ANALYSIS",
+    "제조환경설비", "물류자동화", "CLN",
+  ];
+
+  var OWNERS = [{ id: "guest", name: "관전자 (담당자 미선택)", dept: null }].concat(
+    MAJOR_PROCESSES.map(function (mp) { return { id: mp, name: mp + " 담당자", dept: mp }; })
+  );
+
+  function ownerNameForDept(dept) {
+    var o = OWNERS.filter(function (x) { return x.dept === dept; })[0];
+    return o ? o.name : "미배정";
+  }
+
+  // 백엔드 app/seed.py 의 DEFAULT_VALIDATION_RULES 와 동일한 기준
+  var GAS_THRESHOLDS = { N2: 10, O2: 6, AR: 12, CDA: 15, HE: 8, H2: 6 };
+  var GAS_ALLOWED = ["N2", "O2", "AR", "CDA", "HE", "H2"];
+
+  // 백엔드 app/services/aggregation.py 의 AGGREGATION_SPECS 와 동일
+  var AGG_SPECS = {
+    "POWER": { unit: "KW", groupBy: "전원종류", fields: ["전력값"] },
+    "WATER": { unit: "SLPM", groupBy: "성상명", fields: ["유량", "배관수량"] },
+    "WASTE WATER": { unit: "SLPM", groupBy: "성상명", fields: ["유량", "배관수량"] },
+    "UPW": { unit: "TON/DAY", groupBy: "성상명", fields: ["실사용량"] },
+    "CHEMICAL": { unit: "LITER/DAY", groupBy: "성상명", fields: ["실사용량"] },
+    "GAS/AIR": { unit: "SLPM", groupBy: "성상명", fields: ["배관수량", "유량"] },
+    "SPECIALITY GAS": { unit: "EA", groupBy: "자재명", fields: ["배관수량"] },
+    "폐액": { unit: "TON/DAY", groupBy: "자재명", fields: ["실사용량"] },
+    "EXHAUST": { unit: "CMM", groupBy: "성상명", fields: ["포트 수량", "풍량"] },
+  };
+
+  var CAT_LABEL_OVERRIDE = { "성상명": "성상", "전원종류": "전원", "자재명": "자재" };
+
+  // ---------------------------------------------------------------
+  // 상태
+  // ---------------------------------------------------------------
+  var state = {
+    userId: "guest",
+    view: "sheet", // "sheet" | "upload"
+    selectedSheet: "PD000101",
+    activeTab: "items",
+    threads: [], // 선택된 시트의 스레드
+    corrections: [], // 선택된 시트의 수정 이력
+    composerFor: null, // 새 질문 작성 중인 issue id
+    uploadedSheets: {}, // code -> 업로드로 추가된 제원표 문서 (db 공유 저장소에서 동기화)
+    uploadResult: null, // 최근 업로드 결과 {count, warnings, codes} | {error}
+    uploadBusy: false,
+  };
+
+  var store = null; // db 또는 로컬 폴백
+  var unsubThreads = null;
+  var unsubCorrections = null;
+  var unsubUploads = null;
+
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+  function fmtNum(n) {
+    var r = Math.round(n * 100) / 100;
+    return r.toLocaleString("ko-KR");
+  }
+  function nowIso() { return new Date().toISOString(); }
+  function fmtTime(iso) {
+    try {
+      var d = new Date(iso);
+      return d.toLocaleString("ko-KR", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+    } catch (e) { return ""; }
+  }
+
+  function currentOwner() {
+    var o = OWNERS.filter(function (x) { return x.id === state.userId; })[0];
+    return o || OWNERS[0];
+  }
+
+  // 내장 데모 2건 + 공유 저장소에서 동기화된 업로드분을 합쳐서 하나의 목록으로 취급한다.
+  function getAllSheets() {
+    var merged = {};
+    Object.keys(SHEETS).forEach(function (code) {
+      merged[code] = Object.assign({ uploaded: false }, SHEETS[code]);
+    });
+    Object.keys(state.uploadedSheets).forEach(function (code) {
+      var u = state.uploadedSheets[code];
+      merged[code] = {
+        code: code, dept: u.dept, title: u.title, location: u.location,
+        equipCount: 1, ownerName: ownerNameForDept(u.dept), uploaded: true,
+        prc: u.prc, model: u.model, maker: u.maker, equipmentModuleSummary: u.equipmentModuleSummary,
+        uploadedBy: u.uploadedBy, uploadedAt: u.uploadedAt,
+      };
+    });
+    return merged;
+  }
+
+  function getAllItems(sheetCode) {
+    if (ITEMS[sheetCode]) return ITEMS[sheetCode];
+    var u = state.uploadedSheets[sheetCode];
+    return u ? u.items : [];
+  }
+
+  // ---------------------------------------------------------------
+  // 검증 / 집계 로직 (backend services/rules, services/aggregation.py 미러링)
+  // ---------------------------------------------------------------
+  function effectiveItems(sheetCode) {
+    var items = getAllItems(sheetCode).map(function (it) { return Object.assign({}, it); });
+    state.threads.forEach(function (t) {
+      if (t.sheetCode !== sheetCode || t.status !== "RESOLVED" || t.resolvedValue == null) return;
+      var it = items[t.itemIdx];
+      if (!it) return;
+      var num = parseFloat(String(t.resolvedValue).replace(",", ""));
+      it[t.field] = isNaN(num) ? t.resolvedValue : num;
+    });
+    return items;
+  }
+
+  function computeIssues(sheetCode, items) {
+    var issues = [];
+    items.forEach(function (it, idx) {
+      if (it.category !== "GAS/AIR" || it.유량 == null) return;
+      var species = String(it.성상명 || "").toUpperCase().trim();
+      var max = GAS_THRESHOLDS[species];
+      if (max != null && it.유량 > max) {
+        issues.push({
+          id: sheetCode + "#" + idx + "#유량", itemIdx: idx, field: "유량", severity: "ERROR",
+          message: "[" + species + "] 유량 OVER: " + fmtNum(it.유량) + "SLPM > 기준 " + max + "SLPM",
+        });
+      }
+      if (GAS_ALLOWED.indexOf(species) === -1) {
+        issues.push({
+          id: sheetCode + "#" + idx + "#성상명", itemIdx: idx, field: "성상명", severity: "WARN",
+          message: "표준화되지 않은 값: '" + it.성상명 + "' (허용값: " + GAS_ALLOWED.join(", ") + ")",
+        });
+      }
+    });
+    return issues;
+  }
+
+  function computeAggregation(items) {
+    var result = [];
+    CAT_ORDER.forEach(function (category) {
+      var spec = AGG_SPECS[category];
+      var totals = {};
+      items.forEach(function (it) {
+        if (it.category !== category) return;
+        var groupKey = it[spec.groupBy] || "(미지정)";
+        var amount = 1, any = false;
+        spec.fields.forEach(function (f) {
+          if (it[f] != null) any = true;
+          amount *= (it[f] || 0);
+        });
+        if (!any) return;
+        totals[groupKey] = (totals[groupKey] || 0) + amount;
+      });
+      var keys = Object.keys(totals);
+      if (keys.length) {
+        var sum = keys.reduce(function (a, k) { return a + totals[k]; }, 0);
+        result.push({ category: category, unit: spec.unit, groupBy: spec.groupBy, totals: totals, sum: sum });
+      }
+    });
+    return result;
+  }
+
+  function issueThread(issueId) {
+    return state.threads.filter(function (t) { return t.issueId === issueId; }).sort(function (a, b) {
+      return (b.createdAt || "").localeCompare(a.createdAt || "");
+    })[0] || null;
+  }
+
+  // ---------------------------------------------------------------
+  // 로컬 엑셀 업로드 파서 (backend services/excel_import.py 의 parse_grouped_excel /
+  // _detect_header_rows 를 브라우저에서 그대로 재현). SheetJS(XLSX)로 파일을 읽고,
+  // 같은 로직(헤더 자동 인식 -> 건설코드 carry-down 그룹핑 -> 대공정 다수결 판별)을
+  // 거쳐 items 배열(제원 항목 탭이 바로 쓸 수 있는 형태)로 변환한다.
+  // ---------------------------------------------------------------
+  var COMMON_FIELD_NAMES = ["위치", "라인", "층", "대공정", "PRC", "MODEL", "MAKER", "건설코드", "설비대수"];
+  var HEADER_LABEL_HINTS = COMMON_FIELD_NAMES.concat([
+    "유량", "성상명", "자재명", "압력", "배관수량", "배관재질", "설비모듈",
+    "전력값", "부하전류", "전압", "차단기전류", "전원종류", "풍량", "포트 수량", "실사용량",
+  ]);
+  var CONSTRUCTION_CODE_RE = /^P[A-Za-z0-9]{7}(-\d{2})?$/;
+
+  function cellText(v) {
+    return v === null || v === undefined || String(v).trim() === "" ? "" : String(v).trim();
+  }
+  function splitUnit(text) {
+    var m = /^(.*?)\(([^()]+)\)\s*$/.exec(text);
+    return m ? [m[1].trim(), m[2].trim()] : [text, null];
+  }
+  function isNumericText(s) {
+    return s !== "" && !isNaN(s) && !isNaN(parseFloat(s));
+  }
+
+  function detectHeaderRows(rows) {
+    var maxScan = Math.min(10, rows.length);
+    var bestRow = 0, bestScore = -1;
+    for (var r = 0; r < maxScan; r++) {
+      var texts = (rows[r] || []).map(cellText).filter(function (t) { return t !== ""; });
+      if (!texts.length) continue;
+      var score = texts.filter(function (t) { return HEADER_LABEL_HINTS.indexOf(splitUnit(t)[0]) !== -1; }).length;
+      if (score > bestScore) { bestScore = score; bestRow = r; }
+    }
+    var labelRow = bestScore > 0 ? bestRow : 0;
+    var categoryRow = labelRow > 0 ? labelRow - 1 : labelRow;
+    if (categoryRow >= 0 && categoryRow !== labelRow) {
+      var catTexts = (rows[categoryRow] || []).map(cellText).filter(function (t) { return t !== ""; });
+      var labelTexts = (rows[labelRow] || []).map(cellText).filter(function (t) { return t !== ""; });
+      var sameSet = catTexts.length === labelTexts.length && catTexts.every(function (t) { return labelTexts.indexOf(t) !== -1; });
+      if (!catTexts.length || sameSet) categoryRow = labelRow;
+    }
+    return { categoryRow: categoryRow, labelRow: labelRow, dataStartRow: labelRow + 1, score: Math.max(bestScore, 0) };
+  }
+
+  /** rows: SheetJS sheet_to_json({header:1}) 결과 (0-indexed 배열의 배열).
+   * opts: { constructionCodeOverride } */
+  function parseGroupedWorkbook(rows, opts) {
+    var det = detectHeaderRows(rows);
+    var categoryRow = det.categoryRow, labelRow = det.labelRow, dataStartRow = det.dataStartRow;
+    var maxCol = rows.reduce(function (m, r) { return Math.max(m, (r || []).length); }, 0);
+
+    var colInfo = {}; // colIdx -> {fieldName, baseLabel, category, unit}
+    for (var c = 0; c < maxCol; c++) {
+      var rawLabel = cellText((rows[labelRow] || [])[c]);
+      if (!rawLabel) continue;
+      var parts = splitUnit(rawLabel);
+      var baseLabel = parts[0], unit = parts[1];
+      var category = "";
+      if (categoryRow !== labelRow) category = cellText((rows[categoryRow] || [])[c]);
+      var isCommon = COMMON_FIELD_NAMES.indexOf(baseLabel) !== -1;
+      var fieldName = (isCommon || !category) ? baseLabel : (category + "_" + baseLabel);
+      colInfo[c] = { fieldName: fieldName, baseLabel: baseLabel, category: category, unit: unit };
+    }
+
+    var codeCol = null, mpCol = null;
+    Object.keys(colInfo).forEach(function (c) {
+      if (colInfo[c].baseLabel === "건설코드") codeCol = +c;
+      if (colInfo[c].baseLabel === "대공정") mpCol = +c;
+    });
+
+    var warnings = [];
+    if (det.score <= 2) {
+      warnings.push(
+        "헤더 행을 확신 있게 인식하지 못했습니다 (추정: 대분류 " + (categoryRow + 1) + "행 / 세부항목 " +
+        (labelRow + 1) + "행 / 데이터 " + (dataStartRow + 1) + "행부터). 결과가 이상하면 시트 구조를 확인해 주세요."
+      );
+    }
+
+    var currentCode = opts.constructionCodeOverride || null;
+    var currentMp = null;
+    var rowCode = {}, rowMp = {};
+    for (var r1 = dataStartRow; r1 < rows.length; r1++) {
+      var codeText = codeCol !== null ? cellText((rows[r1] || [])[codeCol]) : "";
+      if (codeText) currentCode = codeText;
+      rowCode[r1] = currentCode;
+      var mpText = mpCol !== null ? cellText((rows[r1] || [])[mpCol]) : "";
+      if (mpText) currentMp = mpText;
+      rowMp[r1] = currentMp;
+    }
+
+    var groupsOrder = [], groupRows = {}, ungroupedRows = [];
+    for (var r2 = dataStartRow; r2 < rows.length; r2++) {
+      var rowHasData = Object.keys(colInfo).some(function (c) { return cellText((rows[r2] || [])[+c]) !== ""; });
+      if (!rowHasData) continue;
+      var code2 = rowCode[r2];
+      if (!code2) { ungroupedRows.push(r2 + 1); continue; }
+      if (!groupRows[code2]) { groupRows[code2] = []; groupsOrder.push(code2); }
+      groupRows[code2].push(r2);
+    }
+    if (ungroupedRows.length) {
+      warnings.push("건설코드를 확인할 수 없어 가져오지 못한 행: " + ungroupedRows.join(", "));
+    }
+
+    var groups = [];
+    groupsOrder.forEach(function (code) {
+      if (!CONSTRUCTION_CODE_RE.test(code)) {
+        warnings.push("'" + code + "' 건설코드 형식이 규칙(P+영숫자7자리)과 다릅니다. 그대로 반영했습니다.");
+      }
+      var mpVotes = {}, commonValues = {}, equipValues = [], itemsByRowCat = {};
+      groupRows[code].forEach(function (r3) {
+        if (rowMp[r3]) mpVotes[rowMp[r3]] = (mpVotes[rowMp[r3]] || 0) + 1;
+        Object.keys(colInfo).forEach(function (cKey) {
+          var c = +cKey, info = colInfo[c];
+          var text = cellText((rows[r3] || [])[c]);
+          if (!text) return;
+          if (COMMON_FIELD_NAMES.indexOf(info.baseLabel) !== -1) {
+            if (commonValues[info.baseLabel] === undefined) commonValues[info.baseLabel] = text;
+            return;
+          }
+          itemsByRowCat[r3] = itemsByRowCat[r3] || {};
+          itemsByRowCat[r3][info.category] = itemsByRowCat[r3][info.category] || { category: info.category };
+          itemsByRowCat[r3][info.category][info.baseLabel] = isNumericText(text) ? parseFloat(text) : text;
+          if (info.baseLabel === "설비모듈") {
+            equipValues.push(info.category ? (info.category + ":" + text) : text);
+          }
+        });
+      });
+      var items = [];
+      Object.keys(itemsByRowCat).forEach(function (rk) {
+        Object.keys(itemsByRowCat[rk]).forEach(function (cat) {
+          if (cat) items.push(itemsByRowCat[rk][cat]);
+        });
+      });
+      var majorProcessRaw = null, bestVotes = 0;
+      Object.keys(mpVotes).forEach(function (k) { if (mpVotes[k] > bestVotes) { bestVotes = mpVotes[k]; majorProcessRaw = k; } });
+
+      groups.push({
+        code: code, items: items,
+        equipmentModuleSummary: Array.prototype.filter.call(equipValues, function (v, i) { return equipValues.indexOf(v) === i; }).join(", ") || null,
+        majorProcessRaw: majorProcessRaw,
+        location: [commonValues["위치"], commonValues["라인"], commonValues["층"]].filter(Boolean).join(" · "),
+        PRC: commonValues["PRC"] || "", MODEL: commonValues["MODEL"] || "", MAKER: commonValues["MAKER"] || "",
+      });
+    });
+
+    if (!groups.length) {
+      throw new Error("건설코드를 하나도 인식하지 못했습니다. '건설코드 대체값'을 입력하거나 시트의 건설코드 열을 확인해 주세요.");
+    }
+    return { groups: groups, warnings: warnings };
+  }
+
+  function resolveMajorProcess(raw, defaultDept, warnings, code) {
+    if (!raw) return defaultDept;
+    var norm = raw.trim().toUpperCase();
+    var found = MAJOR_PROCESSES.filter(function (mp) { return mp.toUpperCase() === norm; })[0];
+    if (found) return found;
+    warnings.push(
+      "'" + code + "' 그룹의 대공정 표기 '" + raw + "'를 인식하지 못해 업로드 시 선택한 대공정(" + defaultDept + ")으로 처리했습니다."
+    );
+    return defaultDept;
+  }
+
+  // ---------------------------------------------------------------
+  // 저장소: db 캐패빌리티 있으면 실시간 공유, 없으면 이 브라우저 세션 로컬 저장
+  // ---------------------------------------------------------------
+  function makeLocalStore() {
+    var threads = [];
+    var corrections = [];
+    var uploadedSheets = {};
+    var seq = 1;
+    function notify(cb, list, sheetCode) {
+      cb(list.filter(function (x) { return x.sheetCode === sheetCode; }));
+    }
+    return {
+      isLive: false,
+      addThread: function (data) {
+        var doc = Object.assign({ id: "local-" + seq++ }, data);
+        threads.push(doc);
+        return Promise.resolve(doc.id);
+      },
+      updateThread: function (id, patch) {
+        var t = threads.filter(function (x) { return x.id === id; })[0];
+        if (t) Object.assign(t, patch);
+        return Promise.resolve();
+      },
+      addCorrection: function (data) {
+        corrections.push(Object.assign({ id: "local-c" + seq++ }, data));
+        return Promise.resolve();
+      },
+      watchThreads: function (sheetCode, cb) {
+        notify(cb, threads, sheetCode);
+        var handle = setInterval(function () { notify(cb, threads, sheetCode); }, 800);
+        return function () { clearInterval(handle); };
+      },
+      watchCorrections: function (sheetCode, cb) {
+        notify(cb, corrections, sheetCode);
+        var handle = setInterval(function () { notify(cb, corrections, sheetCode); }, 800);
+        return function () { clearInterval(handle); };
+      },
+      setUploadedSheet: function (code, doc) {
+        uploadedSheets[code] = doc;
+        return Promise.resolve();
+      },
+      watchUploadedSheets: function (cb) {
+        cb(Object.assign({}, uploadedSheets));
+        var handle = setInterval(function () { cb(Object.assign({}, uploadedSheets)); }, 800);
+        return function () { clearInterval(handle); };
+      },
+    };
+  }
+
+  function makeDbStore(db) {
+    var threadsCol = db.collection("qa_threads");
+    var correctionsCol = db.collection("corrections");
+    var uploadsCol = db.collection("uploaded_sheets");
+    return {
+      isLive: true,
+      addThread: function (data) {
+        return threadsCol.add(Object.assign({}, data)).then(function (ref) { return ref.id; });
+      },
+      updateThread: function (id, patch) {
+        return threadsCol.doc(id).update(patch);
+      },
+      addCorrection: function (data) {
+        return correctionsCol.add(Object.assign({}, data));
+      },
+      watchThreads: function (sheetCode, cb) {
+        return threadsCol.where("sheetCode", "==", sheetCode).onSnapshot(
+          function (snap) {
+            var docs = snap.docs.map(function (d) { return Object.assign({ id: d.id }, d.data()); });
+            cb(docs);
+          },
+          function () { cb([]); }
+        );
+      },
+      watchCorrections: function (sheetCode, cb) {
+        return correctionsCol.where("sheetCode", "==", sheetCode).onSnapshot(
+          function (snap) {
+            var docs = snap.docs.map(function (d) { return Object.assign({ id: d.id }, d.data()); });
+            cb(docs);
+          },
+          function () { cb([]); }
+        );
+      },
+      // 문서 id = 건설코드 -> 같은 코드로 재업로드하면 새로 추가되지 않고 덮어써진다.
+      setUploadedSheet: function (code, doc) {
+        return uploadsCol.doc(code).set(doc);
+      },
+      watchUploadedSheets: function (cb) {
+        return uploadsCol.onSnapshot(
+          function (snap) {
+            var map = {};
+            snap.docs.forEach(function (d) { map[d.id] = d.data(); });
+            cb(map);
+          },
+          function () { cb({}); }
+        );
+      },
+    };
+  }
+
+  function subscribeSheet(sheetCode) {
+    if (unsubThreads) { unsubThreads(); unsubThreads = null; }
+    if (unsubCorrections) { unsubCorrections(); unsubCorrections = null; }
+    unsubThreads = store.watchThreads(sheetCode, function (docs) {
+      docs.sort(function (a, b) { return (a.createdAt || "").localeCompare(b.createdAt || ""); });
+      state.threads = docs;
+      render();
+    });
+    unsubCorrections = store.watchCorrections(sheetCode, function (docs) {
+      docs.sort(function (a, b) { return (b.appliedAt || "").localeCompare(a.appliedAt || ""); });
+      state.corrections = docs;
+      render();
+    });
+  }
+
+  // 업로드된 제원표 목록은 선택된 시트와 무관하게 항상 구독한다 (다른 뷰어가 올린
+  // 파일도 왼쪽 목록에 실시간으로 나타나도록).
+  function subscribeUploads() {
+    if (unsubUploads) { unsubUploads(); unsubUploads = null; }
+    unsubUploads = store.watchUploadedSheets(function (map) {
+      state.uploadedSheets = map;
+      render();
+    });
+  }
+
+  // ---------------------------------------------------------------
+  // 렌더링
+  // ---------------------------------------------------------------
+  var TABS = [
+    { id: "items", label: "제원 항목" },
+    { id: "issues", label: "검증 결과" },
+    { id: "agg", label: "총량 집계" },
+    { id: "qa", label: "질의응답" },
+    { id: "corrections", label: "수정 이력" },
+  ];
+
+  function render() {
+    renderUserSelect();
+    renderSheetList(state.selectedSheet);
+
+    if (state.view === "upload") {
+      renderUploadWorkspace();
+      return;
+    }
+
+    var sheetCode = state.selectedSheet;
+    var sheet = getAllSheets()[sheetCode];
+    var items = effectiveItems(sheetCode);
+    var issues = computeIssues(sheetCode, items);
+    var errorCount = issues.filter(function (i) { return i.severity === "ERROR"; }).length;
+    var agg = computeAggregation(items);
+
+    renderWorkspaceHead(sheet, errorCount);
+    renderTabs(issues.length, state.threads.filter(function(t){return t.status!=="RESOLVED";}).length);
+
+    var panel = document.getElementById("tabPanel");
+    panel.dataset.uploadBuilt = "";
+    if (state.activeTab === "items") panel.innerHTML = renderItemsTab(items, issues);
+    else if (state.activeTab === "issues") panel.innerHTML = renderIssuesTab(issues, items);
+    else if (state.activeTab === "agg") panel.innerHTML = renderAggTab(agg);
+    else if (state.activeTab === "qa") panel.innerHTML = renderQaTab(issues, items);
+    else if (state.activeTab === "corrections") panel.innerHTML = renderCorrectionsTab();
+
+    wireTabPanelEvents(issues, items);
+  }
+
+  function renderUserSelect() {
+    var sel = document.getElementById("userSelect");
+    if (sel.dataset.built) { sel.value = state.userId; return; }
+    sel.dataset.built = "1";
+    sel.innerHTML = OWNERS.map(function (o) {
+      return '<option value="' + o.id + '">' + esc(o.name) + (o.dept ? " · " + o.dept + " 담당" : "") + "</option>";
+    }).join("");
+    sel.value = state.userId;
+    sel.addEventListener("change", function () { state.userId = sel.value; render(); });
+  }
+
+  function renderSheetList(currentCode) {
+    var allSheets = getAllSheets();
+    var codes = Object.keys(allSheets);
+    var uploadedCount = codes.filter(function (c) { return allSheets[c].uploaded; }).length;
+    document.getElementById("sheetCountLabel").textContent =
+      "건설코드 " + codes.length + "건" + (uploadedCount ? " · 업로드 " + uploadedCount + "건" : " · 데모 데이터");
+
+    var html = codes.map(function (code) {
+      var sheet = allSheets[code];
+      var items = effectiveItems(code);
+      var issues = computeIssues(code, items);
+      var errs = issues.filter(function (i) { return i.severity === "ERROR"; }).length;
+      var warns = issues.filter(function (i) { return i.severity === "WARN"; }).length;
+      var active = state.view === "sheet" && code === currentCode;
+      var statusChip = errs > 0
+        ? '<span class="chip error">이슈 ' + (errs + warns) + '건</span>'
+        : (warns > 0 ? '<span class="chip warn">이슈 ' + warns + '건</span>' : '<span class="chip ok">정상</span>');
+      return (
+        '<button class="sheet-card' + (active ? " active" : "") + '" data-code="' + code + '">' +
+          '<div class="row2"><span class="code">' + code + "</span>" + statusChip + "</div>" +
+          '<div class="loc">' + esc(sheet.title) + " · " + esc(sheet.location) + "</div>" +
+          '<div class="row2"><span class="chip dept">' + sheet.dept + "</span>" +
+          (sheet.uploaded
+            ? '<span class="chip neutral">업로드됨</span>'
+            : '<span class="eyebrow">설비 ' + sheet.equipCount + "대</span>") +
+          "</div>" +
+        "</button>"
+      );
+    }).join("");
+    var list = document.getElementById("sheetList");
+    list.innerHTML = html;
+    Array.prototype.forEach.call(list.querySelectorAll(".sheet-card"), function (btn) {
+      btn.addEventListener("click", function () {
+        state.selectedSheet = btn.dataset.code;
+        state.view = "sheet";
+        subscribeSheet(state.selectedSheet);
+        render();
+      });
+    });
+  }
+
+  function renderWorkspaceHead(sheet, errorCount) {
+    var owner = sheet.ownerName;
+    var initials = owner.slice(0, 1);
+    var modelBit = sheet.model ? '<span class="sep">·</span><span class="num">' + esc(sheet.model) + "</span>" : "";
+    var makerBit = sheet.maker ? " (" + esc(sheet.maker) + (sheet.prc ? " " + esc(sheet.prc) : "") + ")" : "";
+    document.getElementById("workspaceHead").innerHTML =
+      '<div>' +
+        "<h1>" + esc(sheet.title) + "</h1>" +
+        '<div class="meta">' +
+          '<span class="num">' + sheet.code + "</span><span class=\"sep\">·</span>" +
+          "<span>" + esc(sheet.location) + "</span><span class=\"sep\">·</span>" +
+          '<span class="chip dept">' + sheet.dept + "</span>" +
+          (sheet.uploaded ? '<span class="chip neutral">업로드됨</span>' : "") +
+          (errorCount > 0 ? '<span class="chip error">OVER ' + errorCount + "건</span>" : '<span class="chip ok">기준 이내</span>') +
+          modelBit + makerBit +
+        "</div>" +
+      "</div>" +
+      '<div class="owner-badge"><div class="avatar">' + esc(initials) + '</div>' +
+        '<div><div style="font-size:12.5px;font-weight:600">' + esc(owner) + '</div>' +
+        '<div class="eyebrow">담당 대공정 · ' + sheet.dept + "</div></div></div>";
+  }
+
+  function renderTabs(issueCount, openThreadCount) {
+    document.getElementById("tabs").innerHTML = TABS.map(function (t) {
+      var badge = "";
+      if (t.id === "issues" && issueCount > 0) badge = '<span class="count">' + issueCount + "</span>";
+      if (t.id === "qa" && openThreadCount > 0) badge = '<span class="count">' + openThreadCount + "</span>";
+      var cls = "tab" + (t.id === state.activeTab ? " active" : "") + (t.id === "issues" && issueCount > 0 ? " has-error" : "");
+      return '<button class="' + cls + '" data-tab="' + t.id + '">' + t.label + badge + "</button>";
+    }).join("");
+    Array.prototype.forEach.call(document.querySelectorAll(".tab"), function (btn) {
+      btn.addEventListener("click", function () { state.activeTab = btn.dataset.tab; render(); });
+    });
+  }
+
+  function renderItemsTab(items, issues) {
+    var flagByItem = {};
+    issues.forEach(function (i) {
+      var cur = flagByItem[i.itemIdx];
+      if (!cur || i.severity === "ERROR") flagByItem[i.itemIdx] = i.severity;
+    });
+    var byCat = {};
+    items.forEach(function (it, idx) { (byCat[it.category] = byCat[it.category] || []).push({ it: it, idx: idx }); });
+
+    return CAT_ORDER.filter(function (c) { return byCat[c]; }).map(function (category) {
+      var rows = byCat[category].map(function (pair) {
+        var it = pair.it, idx = pair.idx;
+        var keyField = it.성상명 || it.전원종류 || it.자재명 || "-";
+        var specBits = [];
+        ["유량", "배관수량", "압력", "배관재질", "전력값", "부하전류", "전압", "차단기전류", "실사용량", "풍량", "포트 수량", "설비모듈"].forEach(function (f) {
+          if (it[f] != null) specBits.push('<span>' + f + " <b>" + (typeof it[f] === "number" ? fmtNum(it[f]) : esc(it[f])) + "</b></span>");
+        });
+        var flag = flagByItem[idx];
+        return (
+          '<div class="item-row' + (flag ? " flagged-" + flag : "") + '">' +
+            '<span class="key">' + esc(keyField) + "</span>" +
+            '<div class="specs">' + specBits.join("") + "</div>" +
+          "</div>"
+        );
+      }).join("");
+      return (
+        '<div class="item-group"><div class="cat-label"><span class="swatch"></span>' + category + " · " + byCat[category].length + '건</div>' + rows + "</div>"
+      );
+    }).join("");
+  }
+
+  function renderIssuesTab(issues, items) {
+    if (issues.length === 0) {
+      return '<div class="empty-state"><div class="big">✓</div>검증 규칙(성상별 유량 OVER, 성상명 표준화)을 통과했습니다.</div>';
+    }
+    return issues.map(function (issue) {
+      var thread = issueThread(issue.id);
+      var it = items[issue.itemIdx];
+      var actionHtml;
+      if (!thread) {
+        actionHtml = '<button class="btn small primary" data-ask="' + issue.id + '">질문하기</button>';
+      } else {
+        var label = thread.status === "RESOLVED" ? "해결됨" : (thread.status === "ANSWERED" ? "답변완료" : "미답변");
+        actionHtml = '<button class="btn small" data-goto-thread="' + thread.id + '">' + label + " · 보기</button>";
+      }
+      return (
+        '<div class="issue-card ' + issue.severity + '">' +
+          '<div class="body">' +
+            '<div class="msg">' + esc(issue.message) + "</div>" +
+            '<div class="sub">' + it.category + " · " + issue.field + " 필드 · 행 #" + (issue.itemIdx + 1) + "</div>" +
+            (state.composerFor === issue.id ? renderComposer(issue) : "") +
+          "</div>" +
+          '<div class="actions">' + actionHtml + "</div>" +
+        "</div>"
+      );
+    }).join("");
+  }
+
+  function renderComposer(issue) {
+    return (
+      '<div class="thread-form" style="margin-top:10px">' +
+        '<textarea rows="2" class="composer-text" placeholder="질문 내용을 입력하세요" data-issue="' + issue.id + '">' +
+          esc("이 값이 맞는지 확인 부탁드립니다. (" + issue.message + ")") +
+        "</textarea>" +
+        '<div class="row"><button class="btn primary small" data-submit-question="' + issue.id + '">질문 등록</button>' +
+        '<button class="btn small" data-cancel-question="' + issue.id + '">취소</button></div>' +
+      "</div>"
+    );
+  }
+
+  function renderAggTab(agg) {
+    if (agg.length === 0) return '<div class="empty-state">집계할 데이터가 없습니다.</div>';
+    return '<div class="agg-grid">' + agg.map(function (a) {
+      var rows = Object.keys(a.totals).sort().map(function (g) {
+        return '<div class="row"><span class="g">' + esc(g) + '</span><span class="v">' + fmtNum(a.totals[g]) + "</span></div>";
+      }).join("");
+      return (
+        '<div class="agg-card">' +
+          '<div class="cat">' + a.category + '</div><div class="unit">' + a.groupBy + " 별 · " + a.unit + "</div>" +
+          '<div class="rows">' + rows + "</div>" +
+          '<div class="total"><span>합계</span><span class="num">' + fmtNum(a.sum) + " " + a.unit + "</span></div>" +
+        "</div>"
+      );
+    }).join("") + "</div>";
+  }
+
+  function renderQaTab(issues, items) {
+    if (state.threads.length === 0) {
+      return '<div class="empty-state"><div class="big">💬</div>등록된 질의가 없습니다. "검증 결과" 탭의 이슈에서 질문을 등록해 보세요.</div>';
+    }
+    var owner = currentOwner();
+    return state.threads.map(function (t) {
+      var canAct = owner.dept && owner.dept === getAllSheets()[state.selectedSheet].dept;
+      var statusLabel = t.status === "RESOLVED" ? "해결됨" : (t.status === "ANSWERED" ? "답변완료(미해결)" : "미답변");
+      var statusClass = t.status === "RESOLVED" ? "ok" : (t.status === "ANSWERED" ? "warn" : "error");
+      var messages = (t.answers || []).map(function (m) {
+        return (
+          '<div class="msg-bubble' + (m.role === "ANSWER" ? " answer" : "") + '">' +
+            '<div class="m-meta">' + esc(m.author) + " · " + fmtTime(m.at) + "</div>" + esc(m.content) +
+          "</div>"
+        );
+      }).join("");
+      var formHtml = "";
+      if (t.status !== "RESOLVED") {
+        formHtml =
+          '<div class="thread-form">' +
+            '<textarea rows="2" class="reply-text" data-thread="' + t.id + '" placeholder="' + (canAct ? "담당자 답변을 입력하세요" : "추가 문의를 입력하세요") + '"></textarea>' +
+            '<div class="row"><button class="btn small primary" data-reply="' + t.id + '">' + (canAct ? "답변 전송" : "문의 전송") + "</button></div>" +
+          "</div>";
+        if (canAct) {
+          formHtml += (
+            '<div class="thread-form" style="margin-top:6px;padding-top:10px;border-top:1px dashed var(--border-strong)">' +
+              '<label class="field-label">해결 처리 — 수정 값 (선택, 제원에 반영)</label>' +
+              '<div class="row"><input class="text" type="text" data-resolve-value="' + t.id + '" placeholder="예: 6">' +
+              '<button class="btn small primary" data-resolve="' + t.id + '">해결로 표시</button></div>' +
+            "</div>"
+          );
+        } else {
+          formHtml += '<div class="gate-note">' + getAllSheets()[state.selectedSheet].dept + ' 담당자만 답변/해결 처리를 할 수 있습니다. 상단에서 담당자를 선택해 보세요.</div>';
+        }
+      }
+      return (
+        '<div class="thread-card">' +
+          '<div class="thread-head"><div>' +
+            '<div class="t-title">' + esc(t.title) + "</div>" +
+            '<div class="t-meta">' + esc(t.questionBy) + " 문의 · " + fmtTime(t.createdAt) + "</div>" +
+          "</div><span class=\"chip " + statusClass + "\">" + statusLabel + "</span></div>" +
+          '<div class="msg-bubble"><div class="m-meta">' + esc(t.questionBy) + " · " + fmtTime(t.createdAt) + "</div>" + esc(t.question) + "</div>" +
+          messages + formHtml +
+        "</div>"
+      );
+    }).join("");
+  }
+
+  function renderCorrectionsTab() {
+    if (state.corrections.length === 0) {
+      return '<div class="empty-state"><div class="big">🗂</div>아직 반영된 수정 이력이 없습니다. 질의응답으로 값이 해결되면 여기 쌓입니다.</div>';
+    }
+    var rows = state.corrections.map(function (c) {
+      return (
+        "<tr><td>" + esc(c.fieldName) + '</td><td><span class="old">' + esc(c.oldValue) + '</span><span class="arrow">→</span><span class="new">' + esc(c.newValue) + "</span></td>" +
+        "<td>" + esc(c.appliedBy) + "</td><td>" + fmtTime(c.appliedAt) + "</td></tr>"
+      );
+    }).join("");
+    return (
+      '<table class="corr-table"><thead><tr><th>필드</th><th>변경</th><th>처리자</th><th>일시</th></tr></thead><tbody>' + rows + "</tbody></table>"
+    );
+  }
+
+  function wireTabPanelEvents(issues, items) {
+    var panel = document.getElementById("tabPanel");
+
+    Array.prototype.forEach.call(panel.querySelectorAll("[data-ask]"), function (btn) {
+      btn.addEventListener("click", function () { state.composerFor = btn.dataset.ask; render(); });
+    });
+    Array.prototype.forEach.call(panel.querySelectorAll("[data-cancel-question]"), function (btn) {
+      btn.addEventListener("click", function () { state.composerFor = null; render(); });
+    });
+    Array.prototype.forEach.call(panel.querySelectorAll("[data-goto-thread]"), function (btn) {
+      btn.addEventListener("click", function () { state.activeTab = "qa"; render(); });
+    });
+    Array.prototype.forEach.call(panel.querySelectorAll("[data-submit-question]"), function (btn) {
+      btn.addEventListener("click", function () {
+        var issueId = btn.dataset.submitQuestion;
+        var issue = issues.filter(function (i) { return i.id === issueId; })[0];
+        var textarea = panel.querySelector('.composer-text[data-issue="' + issueId + '"]');
+        var content = (textarea.value || "").trim();
+        if (!content) return;
+        var owner = currentOwner();
+        var sheet = getAllSheets()[state.selectedSheet];
+        var assignedName = sheet.ownerName;
+        btn.disabled = true;
+        store.addThread({
+          sheetCode: state.selectedSheet, issueId: issueId, itemIdx: issue.itemIdx, field: issue.field,
+          title: issue.message, question: content, questionBy: owner.name, assignedOwnerName: assignedName,
+          status: "OPEN", answers: [], resolvedValue: null, resolvedBy: null, resolvedAt: null, createdAt: nowIso(),
+        }).then(function () {
+          state.composerFor = null;
+          if (!store.isLive) render();
+        });
+      });
+    });
+    Array.prototype.forEach.call(panel.querySelectorAll("[data-reply]"), function (btn) {
+      btn.addEventListener("click", function () {
+        var threadId = btn.dataset.reply;
+        var textarea = panel.querySelector('.reply-text[data-thread="' + threadId + '"]');
+        var content = (textarea.value || "").trim();
+        if (!content) return;
+        var owner = currentOwner();
+        var t = state.threads.filter(function (x) { return x.id === threadId; })[0];
+        var canAct = owner.dept && owner.dept === getAllSheets()[state.selectedSheet].dept;
+        var msg = { author: owner.name, role: canAct ? "ANSWER" : "QUESTION", content: content, at: nowIso() };
+        btn.disabled = true;
+        store.updateThread(threadId, {
+          answers: (t.answers || []).concat([msg]),
+          status: canAct ? "ANSWERED" : t.status,
+        }).then(function () { if (!store.isLive) render(); });
+      });
+    });
+    Array.prototype.forEach.call(panel.querySelectorAll("[data-resolve]"), function (btn) {
+      btn.addEventListener("click", function () {
+        var threadId = btn.dataset.resolve;
+        var input = panel.querySelector('[data-resolve-value="' + threadId + '"]');
+        var newValue = (input.value || "").trim();
+        var owner = currentOwner();
+        var t = state.threads.filter(function (x) { return x.id === threadId; })[0];
+        var it = items[t.itemIdx];
+        var oldValue = newValue ? it[t.field] : null;
+        btn.disabled = true;
+        var patch = {
+          status: "RESOLVED", resolvedValue: newValue || null, resolvedBy: owner.name, resolvedAt: nowIso(),
+          answers: (t.answers || []).concat([{ author: owner.name, role: "COMMENT", content: newValue ? ("해결됨. 값 변경: '" + oldValue + "' → '" + newValue + "'") : "해결됨.", at: nowIso() }]),
+        };
+        store.updateThread(threadId, patch).then(function () {
+          if (newValue) {
+            return store.addCorrection({
+              sheetCode: state.selectedSheet, threadId: threadId, fieldName: t.field,
+              oldValue: String(oldValue), newValue: newValue, appliedBy: owner.name, appliedAt: nowIso(),
+            });
+          }
+        }).then(function () { if (!store.isLive) render(); });
+      });
+    });
+  }
+
+  // ---------------------------------------------------------------
+  // 업로드 화면 (로컬 엑셀 파일을 직접 올려서 이 콘솔에 반영)
+  // ---------------------------------------------------------------
+  function renderUploadWorkspace() {
+    document.getElementById("workspaceHead").innerHTML =
+      "<div><h1>새 제원표 업로드</h1><div class=\"meta\">로컬 엑셀 파일을 선택해서 이 콘솔에 실제로 업로드해 볼 수 있습니다.</div></div>";
+    document.getElementById("tabs").innerHTML = "";
+
+    var panel = document.getElementById("tabPanel");
+    // 폼 자체는 한 번만 그린다 - 다른 뷰어의 실시간 업데이트로 render()가 다시 불려도
+    // 이미 선택해 둔 파일(input[type=file])이 날아가지 않도록.
+    if (panel.dataset.uploadBuilt !== "1") {
+      panel.innerHTML = uploadFormHtml();
+      panel.dataset.uploadBuilt = "1";
+      wireUploadFormEvents();
+    }
+    var resultEl = document.getElementById("uploadResultArea");
+    if (resultEl) resultEl.innerHTML = renderUploadResult();
+    var btn = document.getElementById("uploadSubmitBtn");
+    if (btn) btn.disabled = state.uploadBusy;
+    if (btn) btn.textContent = state.uploadBusy ? "분석 중..." : "업로드 및 분석";
+  }
+
+  function uploadFormHtml() {
+    var deptOptions = MAJOR_PROCESSES.map(function (mp) {
+      return '<option value="' + esc(mp) + '">' + esc(mp) + "</option>";
+    }).join("");
+    return (
+      '<div class="upload-form">' +
+        '<p class="upload-intro">실제 백엔드와 같은 파서 로직(2단 헤더 자동 인식 + 건설코드 자동 그룹핑 + ' +
+        '대공정 자동 판별)을 이 브라우저 안에서 그대로 돌립니다. .xlsx 파일을 선택하면 건설코드 단위로 ' +
+        '자동 분리되어 왼쪽 목록에 추가되고, 검증·집계·질의응답도 바로 사용할 수 있습니다.</p>' +
+        '<div class="field-row">' +
+          '<div class="field"><label class="field-label">대공정 (파일에 대공정 열이 없거나 인식 못했을 때 기본값)</label>' +
+          '<select id="uploadDeptSelect">' + deptOptions + "</select></div>" +
+          '<div class="field"><label class="field-label">시트(탭) 이름 (선택, 비우면 첫 시트)</label>' +
+          '<input class="text" id="uploadSheetName" placeholder="예: CVD"></div>' +
+        "</div>" +
+        '<div class="field-row">' +
+          '<div class="field"><label class="field-label">건설코드 대체값 (선택)</label>' +
+          '<input class="text" id="uploadCodeOverride" placeholder="시트에 건설코드가 비어있을 때만 사용"></div>' +
+          '<div class="field"><label class="field-label">엑셀 파일 (.xlsx)</label>' +
+          '<input type="file" id="uploadFileInput" accept=".xlsx,.xlsm"></div>' +
+        "</div>" +
+        '<button class="btn primary" id="uploadSubmitBtn">업로드 및 분석</button>' +
+        '<div id="uploadResultArea" style="margin-top:14px"></div>' +
+      "</div>"
+    );
+  }
+
+  function renderUploadResult() {
+    if (!state.uploadResult) return "";
+    if (state.uploadResult.error) {
+      return '<div class="upload-result-error">' + esc(state.uploadResult.error) + "</div>";
+    }
+    var r = state.uploadResult;
+    var html = '<div class="upload-result-ok">건설코드 ' + r.count + "건이 새 제원표로 추가됐습니다: " +
+      r.codes.map(esc).join(", ") + "</div>";
+    if (r.warnings.length) {
+      html += "<ul style=\"margin:0;padding-left:18px\">" +
+        r.warnings.map(function (w) { return '<li class="upload-result-warn">' + esc(w) + "</li>"; }).join("") +
+        "</ul>";
+    }
+    return html;
+  }
+
+  function wireUploadFormEvents() {
+    var btn = document.getElementById("uploadSubmitBtn");
+    if (btn) btn.addEventListener("click", handleUploadSubmit);
+  }
+
+  function handleUploadSubmit() {
+    var fileInput = document.getElementById("uploadFileInput");
+    var file = fileInput && fileInput.files[0];
+    if (!file) {
+      state.uploadResult = { error: "엑셀 파일을 선택해 주세요." };
+      render();
+      return;
+    }
+    var defaultDept = document.getElementById("uploadDeptSelect").value;
+    var sheetLabel = (document.getElementById("uploadSheetName").value || "").trim();
+    var codeOverride = (document.getElementById("uploadCodeOverride").value || "").trim().toUpperCase() || null;
+
+    state.uploadBusy = true;
+    state.uploadResult = null;
+    render();
+
+    file.arrayBuffer()
+      .then(function (buf) {
+        var wb = XLSX.read(buf, { type: "array" });
+        var sheetName = (sheetLabel && wb.SheetNames.indexOf(sheetLabel) !== -1) ? sheetLabel : wb.SheetNames[0];
+        var ws = wb.Sheets[sheetName];
+        var rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null, raw: true });
+
+        var parsed = parseGroupedWorkbook(rows, { constructionCodeOverride: codeOverride });
+        var groups = parsed.groups.map(function (g) {
+          return Object.assign({}, g, { dept: resolveMajorProcess(g.majorProcessRaw, defaultDept, parsed.warnings, g.code) });
+        });
+        if (groups.length > 200) {
+          parsed.warnings.push("그룹이 너무 많아(" + groups.length + "건) 처음 200건만 반영했습니다.");
+          groups = groups.slice(0, 200);
+        }
+
+        var owner = currentOwner();
+        var savePromises = groups.map(function (g) {
+          var doc = {
+            code: g.code, dept: g.dept,
+            title: g.dept + " " + g.code + (g.MODEL ? " (" + g.MODEL + ")" : ""),
+            location: g.location, prc: g.PRC, model: g.MODEL, maker: g.MAKER,
+            equipmentModuleSummary: g.equipmentModuleSummary, items: g.items,
+            sourceFilename: file.name, uploadedBy: owner.name, uploadedAt: nowIso(),
+          };
+          return store.setUploadedSheet(g.code, doc).then(function () {
+            if (!store.isLive) state.uploadedSheets[g.code] = doc; // 로컬 모드는 즉시 반영
+          });
+        });
+
+        return Promise.all(savePromises).then(function () {
+          state.uploadResult = { count: groups.length, warnings: parsed.warnings, codes: groups.map(function (g) { return g.code; }) };
+          if (groups.length) {
+            state.selectedSheet = groups[0].code;
+            state.view = "sheet";
+            subscribeSheet(state.selectedSheet);
+          }
+        });
+      })
+      .catch(function (err) {
+        state.uploadResult = { error: err && err.message ? err.message : String(err) };
+      })
+      .then(function () {
+        state.uploadBusy = false;
+        render();
+      });
+  }
+
+  // ---------------------------------------------------------------
+  // 부팅
+  // ---------------------------------------------------------------
+  function setLive(on, label) {
+    var pill = document.getElementById("livePill");
+    pill.classList.toggle("on", on);
+    document.getElementById("liveLabel").textContent = label;
+  }
+
+  function boot(db) {
+    if (db) {
+      store = makeDbStore(db);
+      setLive(true, "실시간 공유 연결됨");
+    } else {
+      store = makeLocalStore();
+      setLive(false, "로컬 모드 (이 브라우저만)");
+      document.getElementById("banner").innerHTML =
+        '<div class="banner">이 보기에서는 실시간 공유 저장소에 연결하지 못해 로컬 모드로 동작합니다. 질의응답은 이 브라우저 세션에서만 유지됩니다.</div>';
+    }
+    subscribeSheet(state.selectedSheet);
+    subscribeUploads();
+    render();
+  }
+
+  document.getElementById("newUploadBtn").addEventListener("click", function () {
+    state.view = "upload";
+    state.uploadResult = null;
+    var panel = document.getElementById("tabPanel");
+    if (panel) panel.dataset.uploadBuilt = ""; // 다시 열 때는 폼을 새로 그린다
+    render();
+  });
+
+  // db 캐패빌리티는 비동기로 나중에 응답할 수 있어, 우선 로컬 모드로 즉시 렌더한 뒤
+  // 연결되면 실시간 저장소로 전환한다.
+  store = makeLocalStore();
+  subscribeSheet(state.selectedSheet);
+  subscribeUploads();
+  render();
+
+  if (window.claude && typeof window.claude.use === "function") {
+    window.claude.use("db").then(function (db) {
+      if (db) boot(db);
+    }).catch(function () { /* 로컬 모드 유지 */ });
+  }
+  setTimeout(function () {
+    if (!store.isLive) setLive(false, "로컬 모드 (이 브라우저만)");
+  }, 3000);
+})();
+</script>

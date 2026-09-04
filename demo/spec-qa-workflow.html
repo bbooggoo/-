@@ -1,0 +1,1789 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found]){display:none!important}</style></head><body>
+<title>제원 질의 데스크</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Sans+KR:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  :root {
+    --bg: #eef3f4;
+    --surface: #ffffff;
+    --surface-2: #f5f9fa;
+    --ink: #0f2429;
+    --ink-muted: #4c6469;
+    --ink-faint: #7c9297;
+    --border: #d7e2e3;
+    --border-strong: #b9c9cb;
+    --accent: #0e7c86;
+    --accent-strong: #0a5f68;
+    --accent-soft: #dcf0ef;
+    --ok: #1f8a55;
+    --ok-soft: #e2f5e9;
+    --warn: #a9660f;
+    --warn-soft: #fbedd8;
+    --error: #b3412c;
+    --error-soft: #fbe6e1;
+    --role-admin: #6a4c93;
+    --role-admin-soft: #ece3f5;
+    --shadow: 0 1px 2px rgba(15,36,41,0.06), 0 8px 24px -12px rgba(15,36,41,0.18);
+    --sans: "IBM Plex Sans", "IBM Plex Sans KR", -apple-system, "Malgun Gothic", sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, monospace;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0b1517; --surface: #111f22; --surface-2: #16262a;
+      --ink: #e4eef0; --ink-muted: #9db3b8; --ink-faint: #6c8388;
+      --border: #23383c; --border-strong: #304a4f;
+      --accent: #35c4bd; --accent-strong: #5fd9d2; --accent-soft: #123531;
+      --ok: #4fbf87; --ok-soft: #133226;
+      --warn: #dba24d; --warn-soft: #3a2c15;
+      --error: #e28374; --error-soft: #3a1f19;
+      --role-admin: #b79ce0; --role-admin-soft: #2b2140;
+      --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px -12px rgba(0,0,0,0.5);
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0b1517; --surface: #111f22; --surface-2: #16262a;
+    --ink: #e4eef0; --ink-muted: #9db3b8; --ink-faint: #6c8388;
+    --border: #23383c; --border-strong: #304a4f;
+    --accent: #35c4bd; --accent-strong: #5fd9d2; --accent-soft: #123531;
+    --ok: #4fbf87; --ok-soft: #133226;
+    --warn: #dba24d; --warn-soft: #3a2c15;
+    --error: #e28374; --error-soft: #3a1f19;
+    --role-admin: #b79ce0; --role-admin-soft: #2b2140;
+    --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px -12px rgba(0,0,0,0.5);
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--sans); font-size: 14px; line-height: 1.5; }
+  h1, h2, h3 { text-wrap: balance; margin: 0; }
+  table { border-collapse: collapse; }
+  ::selection { background: var(--accent-soft); }
+  a { color: var(--accent-strong); }
+  .num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  .eyebrow { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.09em; text-transform: uppercase; color: var(--ink-faint); }
+
+  /* ---------------- topbar + page nav ---------------- */
+  .topbar { position: sticky; top: 0; z-index: 20; display: flex; align-items: center; gap: 16px; padding: 12px 20px; background: var(--surface); border-bottom: 1px solid var(--border); }
+  .brand { display: flex; align-items: center; gap: 10px; }
+  .brand svg { flex: none; }
+  .brand-text { display: flex; flex-direction: column; gap: 1px; }
+  .brand-text .name { font-weight: 700; font-size: 15px; letter-spacing: -0.01em; }
+  .brand-text .tag { font-family: var(--mono); font-size: 10px; letter-spacing: 0.08em; color: var(--ink-faint); text-transform: uppercase; }
+  .topbar .spacer { flex: 1; }
+  .live-pill { display: flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 11px; color: var(--ink-muted); padding: 5px 10px; border-radius: 999px; border: 1px solid var(--border); white-space: nowrap; }
+  .live-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ink-faint); }
+  .live-pill.on .live-dot { background: var(--ok); box-shadow: 0 0 0 3px var(--ok-soft); }
+  select.user-select { font-family: var(--sans); font-size: 13px; font-weight: 500; color: var(--ink); background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 7px 32px 7px 12px; cursor: pointer; appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%234c6469' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 12px center; max-width: 260px; }
+  select.user-select:focus-visible, button:focus-visible, .tab:focus-visible, .nav-btn:focus-visible, .chip-btn:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+  .page-nav { position: sticky; top: 49px; z-index: 19; display: flex; gap: 2px; padding: 0 20px; background: var(--surface); border-bottom: 1px solid var(--border); overflow-x: auto; }
+  .nav-btn { font-family: var(--sans); font-size: 12.5px; font-weight: 600; color: var(--ink-muted); background: none; border: none; padding: 11px 14px; border-radius: 0; cursor: pointer; white-space: nowrap; box-shadow: inset 0 -2px 0 transparent; }
+  .nav-btn:hover { color: var(--ink); background: var(--surface-2); }
+  .nav-btn.active { color: var(--accent-strong); box-shadow: inset 0 -2px 0 var(--accent); }
+  .nav-btn.dim { color: var(--ink-faint); }
+
+  .page { max-width: 1240px; margin: 0 auto; padding: 20px; }
+  .banner { margin: 14px 20px 0; padding: 9px 13px; border-radius: 8px; font-size: 12px; background: var(--warn-soft); color: var(--warn); border: 1px solid transparent; }
+  .banner.info { background: var(--accent-soft); color: var(--accent-strong); }
+
+  .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); padding: 16px 18px; margin-bottom: 16px; }
+  .panel h2 { font-size: 14px; font-weight: 700; margin-bottom: 4px; }
+  .panel > .lead { font-size: 12.5px; color: var(--ink-muted); margin: 0 0 12px; max-width: 68ch; }
+
+  /* ---------------- filters / forms ---------------- */
+  .filter-bar { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
+  .field { display: flex; flex-direction: column; gap: 4px; min-width: 170px; }
+  .field.grow { flex: 1; }
+  label.field-label { font-size: 11px; font-weight: 600; color: var(--ink-muted); }
+  select, input.text, textarea, input[type="file"] { font-family: var(--sans); font-size: 13px; color: var(--ink); background: var(--surface); border: 1px solid var(--border-strong); border-radius: 8px; padding: 8px 10px; width: 100%; }
+  textarea { resize: vertical; }
+  .checkbox-row { display: flex; align-items: center; gap: 6px; padding: 8px 0 0; }
+  .checkbox-row input { width: auto; }
+  .checkbox-grid { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 4px; }
+  .checkbox-grid label { display: flex; align-items: center; gap: 5px; font-size: 12.5px; color: var(--ink-muted); }
+  .auto-note { font-size: 11.5px; color: var(--ink-faint); margin: 0 0 10px; }
+
+  /* ---------------- buttons / chips ---------------- */
+  .btn { font-family: var(--sans); font-size: 12.5px; font-weight: 600; padding: 7px 13px; border-radius: 7px; border: 1px solid var(--border-strong); background: var(--surface); color: var(--ink); cursor: pointer; }
+  .btn:hover { background: var(--surface-2); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: white; }
+  .btn.primary:hover { background: var(--accent-strong); }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn.small { padding: 5px 10px; font-size: 11.5px; }
+  .btn-row { display: flex; gap: 8px; flex-wrap: wrap; }
+
+  .chip { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: 999px; white-space: nowrap; }
+  .chip.dept { background: var(--surface-2); border: 1px solid var(--border-strong); color: var(--ink-muted); font-family: var(--mono); letter-spacing: 0.02em; }
+  .chip.ok { background: var(--ok-soft); color: var(--ok); }
+  .chip.error { background: var(--error-soft); color: var(--error); }
+  .chip.warn { background: var(--warn-soft); color: var(--warn); }
+  .chip.neutral { background: var(--surface-2); border: 1px solid var(--border-strong); color: var(--ink-muted); }
+  .chip.role-ADMIN { background: var(--role-admin-soft); color: var(--role-admin); }
+  .chip.role-TECH_LEAD { background: var(--accent-soft); color: var(--accent-strong); }
+  .chip.role-DESIGNER { background: var(--warn-soft); color: var(--warn); }
+  .chip.type-AUTO { background: var(--accent-soft); color: var(--accent-strong); }
+  .chip.type-MANUAL { background: var(--surface-2); border: 1px solid var(--border-strong); color: var(--ink-muted); }
+
+  .error-text { color: var(--error); font-size: 12px; margin: 6px 0 0; }
+  .empty-state { padding: 28px 10px; text-align: center; color: var(--ink-faint); font-size: 13px; }
+  .empty-state .big { font-size: 28px; margin-bottom: 6px; }
+  .gate-note { font-size: 11.5px; color: var(--ink-faint); margin-top: 10px; padding: 8px 10px; background: var(--surface-2); border-radius: 7px; border: 1px dashed var(--border-strong); }
+
+  /* ---------------- dashboard / sheet table ---------------- */
+  .sheet-table { width: 100%; font-size: 12.5px; }
+  .sheet-table th { text-align: left; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--ink-faint); font-weight: 600; padding: 0 10px 8px; border-bottom: 1px solid var(--border); }
+  .sheet-table td { padding: 10px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  .sheet-table tr:last-child td { border-bottom: none; }
+  .sheet-table tr.clickable { cursor: pointer; }
+  .sheet-table tr.clickable:hover { background: var(--surface-2); }
+  .sheet-table .code-link { font-family: var(--mono); font-weight: 600; color: var(--ink); text-decoration: none; }
+  .sheet-table .code-link:hover { color: var(--accent-strong); }
+
+  /* ---------------- stat tiles ---------------- */
+  .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px; }
+  .stat-tile { padding: 4px 2px; }
+  .stat-tile .label { font-size: 11.5px; color: var(--ink-muted); margin-bottom: 4px; }
+  .stat-tile .value { font-family: var(--mono); font-size: 26px; font-weight: 700; }
+  .stat-tile .value.ok { color: var(--ok); }
+  .stat-tile .value.warn { color: var(--warn); }
+  .stat-tile .value.error { color: var(--error); }
+  .stat-tile .value.accent { color: var(--accent-strong); }
+
+  /* ---------------- aggregation ---------------- */
+  .agg-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
+  .agg-card { border: 1px solid var(--border); border-radius: 10px; padding: 14px; background: var(--surface-2); }
+  .agg-card.gcs { border-color: var(--accent); }
+  .agg-card .cat { font-weight: 700; font-size: 13px; display: flex; align-items: center; gap: 6px; }
+  .agg-card .unit { font-family: var(--mono); font-size: 10.5px; color: var(--ink-faint); text-transform: uppercase; letter-spacing: 0.04em; }
+  .agg-card .rows { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; max-height: 160px; overflow-y: auto; }
+  .agg-card .row { display: flex; justify-content: space-between; align-items: baseline; font-size: 12.5px; gap: 8px; }
+  .agg-card .row .g { color: var(--ink-muted); }
+  .agg-card .row .v { font-family: var(--mono); font-weight: 600; }
+  .agg-card .total { margin-top: 10px; padding-top: 9px; border-top: 1px dashed var(--border-strong); display: flex; justify-content: space-between; font-size: 13px; font-weight: 700; }
+
+  /* ---------------- sheet detail shell ---------------- */
+  .shell { display: grid; grid-template-columns: 300px 1fr; gap: 16px; max-width: 1240px; margin: 0 auto; padding: 20px; align-items: start; }
+  @media (max-width: 860px) { .shell { grid-template-columns: 1fr; } }
+  .rail-head { padding: 14px 16px 8px; }
+  .rail-head h2 { font-size: 13px; font-weight: 600; }
+  .rail-head-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .rail-list { display: flex; flex-direction: column; gap: 10px; padding: 4px 12px 14px; }
+  .sheet-card { text-align: left; width: 100%; cursor: pointer; background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; font-family: var(--sans); color: var(--ink); }
+  .sheet-card:hover { border-color: var(--border-strong); }
+  .sheet-card.active { background: var(--accent-soft); border-color: var(--accent); }
+  .sheet-card .code { font-family: var(--mono); font-weight: 600; font-size: 14px; letter-spacing: -0.01em; }
+  .sheet-card .row2 { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .workspace-head { padding: 18px 20px 14px; border-bottom: 1px solid var(--border); display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+  .workspace-head h1 { font-size: 19px; font-weight: 700; }
+  .workspace-head .meta { margin-top: 4px; font-size: 12.5px; color: var(--ink-muted); display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+  .workspace-head .meta .sep { color: var(--border-strong); }
+  .tabs { display: flex; gap: 2px; padding: 10px 16px 0; border-bottom: 1px solid var(--border); overflow-x: auto; }
+  .tab { font-family: var(--sans); font-size: 12.5px; font-weight: 600; color: var(--ink-muted); background: none; border: none; padding: 9px 14px; border-radius: 8px 8px 0 0; cursor: pointer; display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+  .tab:hover { color: var(--ink); background: var(--surface-2); }
+  .tab.active { color: var(--accent-strong); background: var(--surface-2); box-shadow: inset 0 -2px 0 var(--accent); }
+  .tab .count { font-family: var(--mono); font-size: 10.5px; background: var(--surface); border: 1px solid var(--border-strong); padding: 0 6px; border-radius: 999px; }
+  .tab.has-error .count { background: var(--error-soft); color: var(--error); border-color: transparent; }
+  .tab-panel { padding: 18px 20px 22px; }
+  .item-group { margin-bottom: 18px; }
+  .item-group:last-child { margin-bottom: 0; }
+  .item-group .cat-label { font-size: 12px; font-weight: 700; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
+  .item-group .cat-label .swatch { width: 8px; height: 8px; border-radius: 2px; background: var(--accent); }
+  .item-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 9px 12px; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 6px; background: var(--surface-2); }
+  .item-row.flagged-ERROR { border-color: var(--error); background: var(--error-soft); }
+  .item-row.flagged-WARN { border-color: var(--warn); background: var(--warn-soft); }
+  .item-row .key { font-weight: 600; font-size: 13px; min-width: 90px; }
+  .item-row .specs { display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px; color: var(--ink-muted); }
+  .item-row .specs b { font-family: var(--mono); color: var(--ink); font-weight: 600; }
+  .issue-card { display: flex; gap: 12px; padding: 12px 14px; border-radius: 10px; margin-bottom: 10px; border: 1px solid var(--border); border-left: 4px solid var(--ink-faint); }
+  .issue-card.ERROR { border-left-color: var(--error); background: var(--error-soft); }
+  .issue-card.WARN { border-left-color: var(--warn); background: var(--warn-soft); }
+  .issue-card .body { flex: 1; min-width: 0; }
+  .issue-card .msg { font-size: 13px; font-weight: 500; }
+  .issue-card .sub { font-size: 11.5px; color: var(--ink-muted); margin-top: 3px; }
+  .issue-card .suggest { font-size: 11.5px; color: var(--accent-strong); margin-top: 4px; }
+  .issue-card .actions { flex: none; }
+  .corr-table { width: 100%; font-size: 12.5px; }
+  .corr-table th { text-align: left; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--ink-faint); font-weight: 600; padding: 0 10px 8px; border-bottom: 1px solid var(--border); }
+  .corr-table td { padding: 9px 10px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  .corr-table tr:last-child td { border-bottom: none; }
+  .corr-table .arrow { color: var(--ink-faint); margin: 0 6px; }
+  .corr-table .old { color: var(--error); text-decoration: line-through; font-family: var(--mono); }
+  .corr-table .new { color: var(--ok); font-weight: 700; font-family: var(--mono); }
+  .thread-form { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+  .thread-form .row { display: flex; gap: 8px; }
+  .thread-form .row textarea, .thread-form .row input { flex: 1; }
+
+  /* ---------------- queries page ---------------- */
+  .queries-grid { display: grid; grid-template-columns: 380px 1fr; gap: 16px; align-items: start; }
+  @media (max-width: 900px) { .queries-grid { grid-template-columns: 1fr; } }
+  .thread-card { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; margin-bottom: 10px; background: var(--surface-2); cursor: pointer; }
+  .thread-card:hover { border-color: var(--border-strong); }
+  .thread-card.active { background: var(--accent-soft); border-color: var(--accent); }
+  .thread-card .t-title { font-weight: 600; font-size: 13px; margin: 6px 0 4px; }
+  .thread-card .t-meta { font-size: 11px; color: var(--ink-faint); }
+  .msg-bubble { margin-top: 10px; padding: 9px 11px; border-radius: 8px; background: var(--surface-2); border: 1px solid var(--border); font-size: 12.5px; }
+  .msg-bubble.ANSWER { background: var(--ok-soft); border-color: transparent; }
+  .msg-bubble.COMMENT { background: var(--surface); }
+  .msg-bubble .m-meta { font-size: 10.5px; color: var(--ink-faint); margin-bottom: 3px; font-family: var(--mono); }
+  .target-table { width: 100%; font-size: 12.5px; margin-bottom: 14px; }
+  .target-table th { text-align: left; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--ink-faint); font-weight: 600; padding: 0 10px 8px; border-bottom: 1px solid var(--border); }
+  .target-table td { padding: 8px 10px; border-bottom: 1px solid var(--border); }
+  .target-table .tobe { font-weight: 700; color: var(--accent-strong); }
+
+  /* ---------------- owners page ---------------- */
+  .owner-table { width: 100%; font-size: 12.5px; }
+  .owner-table th { text-align: left; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--ink-faint); font-weight: 600; padding: 0 10px 8px; border-bottom: 1px solid var(--border); }
+  .owner-table td { padding: 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  .owners-grid { display: grid; grid-template-columns: 1.4fr 1fr; gap: 16px; align-items: start; }
+  @media (max-width: 900px) { .owners-grid { grid-template-columns: 1fr; } }
+
+  .upload-result-ok { background: var(--ok-soft); color: var(--ok); border-radius: 8px; padding: 9px 13px; font-size: 12.5px; margin-bottom: 8px; }
+  .upload-result-error { background: var(--error-soft); color: var(--error); border-radius: 8px; padding: 9px 13px; font-size: 12.5px; }
+  .upload-result-warn { font-size: 12px; color: var(--warn); margin: 0 0 8px; padding-left: 18px; }
+
+  .footer-note { max-width: 1240px; margin: 4px auto 32px; padding: 0 20px; font-size: 11.5px; color: var(--ink-faint); }
+  .footer-note a { color: var(--ink-muted); }
+</style>
+
+<div class="topbar">
+  <div class="brand">
+    <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+      <rect x="7" y="7" width="14" height="14" rx="2" stroke="var(--accent)" stroke-width="2"/>
+      <rect x="11.5" y="11.5" width="5" height="5" rx="0.5" fill="var(--accent)"/>
+      <g stroke="var(--accent)" stroke-width="1.6" stroke-linecap="round">
+        <path d="M10 2v3M14 2v3M18 2v3M10 23v3M14 23v3M18 23v3"/>
+        <path d="M2 10h3M2 14h3M2 18h3M23 10h3M23 14h3M23 18h3"/>
+      </g>
+    </svg>
+    <div class="brand-text">
+      <div class="name">제원 질의 데스크</div>
+      <div class="tag">Spec Q&amp;A Workflow</div>
+    </div>
+  </div>
+  <div class="spacer"></div>
+  <div class="live-pill" id="livePill"><span class="live-dot"></span><span id="liveLabel">연결 확인 중</span></div>
+  <select class="user-select" id="pjtSelect" aria-label="현재 PJT 선택"></select>
+  <select class="user-select" id="userSelect" aria-label="현재 작업자 선택"></select>
+</div>
+<div class="page-nav" id="pageNav"></div>
+<div id="banner"></div>
+<main id="mainArea"></main>
+<div class="footer-note">
+  설계사가 질의를 올리고 대공정/공종 담당자가 답변·승인하는 역할 기반 워크플로우를 여러 명이 동시에
+  열어 실시간으로 함께 씁니다(같은 조직 로그인 사용자 전원 공유). 실제 백엔드와 동일한 파서·검증(성상별
+  유량 OVER, 성상명 표준화)·집계 로직을 브라우저에서 재현했고, 자동/수동 질의 승인 이력은 이 페이지의
+  공유 저장소에 실시간으로 누적됩니다.
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  // ===================================================================
+  // 상수 (백엔드 app/models.py, app/seed.py, app/services/* 미러링)
+  // ===================================================================
+  var CAT_ORDER = ["GAS/AIR", "POWER", "EXHAUST", "SPECIALITY GAS", "WATER", "CHEMICAL", "UPW", "폐액", "WASTE WATER"];
+  var GCS_CATEGORIES = ["SPECIALITY GAS", "폐액"];
+
+  var MAJOR_PROCESSES = [
+    "PHOTO", "CVD", "ETCH", "METAL", "CMP", "IMP", "DIFF", "PMTC", "EDS", "ANALYSIS",
+    "제조환경설비", "물류자동화", "CLN",
+  ];
+
+  // 사업장(PJT) · 단계(phase) — 대시보드/SUMMARY/제원 DB/질의응답 모두 이 값으로 필터링된다.
+  var PJT_SITES = { P3: 4, P4: 4, P5: 6 };
+  function pjtOptions() {
+    var opts = [];
+    Object.keys(PJT_SITES).forEach(function (site) {
+      for (var i = 1; i <= PJT_SITES[site]; i++) opts.push(site + " ph" + i);
+    });
+    return opts;
+  }
+  var DEFAULT_PJT = "P5 ph1";
+
+  var DISCIPLINES = [
+    { code: "PIPING", name: "공종배관" },
+    { code: "HVAC", name: "HVAC" },
+    { code: "UPW", name: "UPW" },
+    { code: "ELECTRIC", name: "전기" },
+    { code: "ARCH", name: "건축" },
+    { code: "SPECIALITY_GAS", name: "SPECIALITY GAS" },
+    { code: "CCSS", name: "CCSS" },
+  ];
+  function disciplineName(code) {
+    var d = DISCIPLINES.filter(function (x) { return x.code === code; })[0];
+    return d ? d.name : code;
+  }
+  var CATEGORY_TO_DISCIPLINE = {
+    "GAS/AIR": "PIPING", "WATER": "PIPING", "WASTE WATER": "PIPING",
+    "EXHAUST": "HVAC", "UPW": "UPW", "POWER": "ELECTRIC",
+    "CHEMICAL": "CCSS", "폐액": "CCSS", "SPECIALITY GAS": "SPECIALITY_GAS",
+  };
+
+  var ROLES = ["ADMIN", "TECH_LEAD", "DESIGNER"];
+  var ROLE_LABEL = { ADMIN: "관리자", TECH_LEAD: "기술팀 담당자", DESIGNER: "설계사" };
+
+  // app/seed.py DEFAULT_VALIDATION_RULES 와 동일한 기준값
+  var GAS_THRESHOLDS = { N2: 10, O2: 6, AR: 12, CDA: 15, HE: 8, H2: 6 };
+  var GAS_ALLOWED = ["N2", "O2", "AR", "CDA", "HE", "H2"];
+  // services/rules/alias_correction_rule.py 미러링: 비표준 표기 -> 표준값
+  var ALIAS_MAP = { "GN2": "N2", "LN2": "N2", "질소": "N2", "N2 GAS": "N2" };
+
+  // services/aggregation.py AGGREGATION_SPECS 와 동일
+  var AGG_SPECS = {
+    "POWER": { unit: "KW", groupBy: "전원종류", fields: ["전력값"] },
+    "WATER": { unit: "SLPM", groupBy: "성상명", fields: ["유량", "배관수량"] },
+    "WASTE WATER": { unit: "SLPM", groupBy: "성상명", fields: ["유량", "배관수량"] },
+    "UPW": { unit: "TON/DAY", groupBy: "성상명", fields: ["실사용량"] },
+    "CHEMICAL": { unit: "LITER/DAY", groupBy: "성상명", fields: ["실사용량"] },
+    "GAS/AIR": { unit: "SLPM", groupBy: "성상명", fields: ["배관수량", "유량"] },
+    "SPECIALITY GAS": { unit: "EA", groupBy: "자재명", fields: ["배관수량"] },
+    "폐액": { unit: "TON/DAY", groupBy: "자재명", fields: ["실사용량"] },
+    "EXHAUST": { unit: "CMM", groupBy: "성상명", fields: ["포트 수량", "풍량"] },
+  };
+
+  var QA_STATUS_LABEL = {
+    OPEN: "미답변", TECH_ANSWERED: "답변완료(설계사 검토 대기)", ANSWER_APPROVED: "답변승인(값 수정 대기)",
+    VALUE_PROPOSED: "값 제안됨(최종승인 대기)", RESOLVED: "해결됨", REJECTED: "반려됨",
+  };
+  var QA_STATUS_CHIP = {
+    OPEN: "error", TECH_ANSWERED: "warn", ANSWER_APPROVED: "warn", VALUE_PROPOSED: "warn", RESOLVED: "ok", REJECTED: "neutral",
+  };
+  var OPEN_STATUSES = ["OPEN", "TECH_ANSWERED", "ANSWER_APPROVED", "VALUE_PROPOSED"];
+
+  // ===================================================================
+  // 데모 시드 데이터 (실제 백엔드 검증값과 동일: PD000101 은 유량 OVER(O2)와
+  // 비표준 표기(질소) 를 하나씩 포함해 자동/수동 질의 두 트랙을 바로 볼 수 있음)
+  // ===================================================================
+  var SEED_SHEETS = [
+    {
+      code: "PD000101", dept: "CVD", title: "CVD 장비 A동 제원표", location: "평택 · P5 ph1 · 3F", pjt: "P5 ph1",
+      items: [
+        { category: "GAS/AIR", 성상명: "N2", 유량: 9, 배관수량: 2, 압력: 3.5, 배관재질: "SUS316L", 설비모듈: "SCRUBBER" },
+        { category: "GAS/AIR", 성상명: "O2", 유량: 8, 배관수량: 1, 압력: 3.0, 배관재질: "SUS316L", 설비모듈: "SCRUBBER" },
+        { category: "GAS/AIR", 성상명: "CDA", 유량: 6, 배관수량: 2, 압력: 4.0, 배관재질: "SUS316L", 설비모듈: "SCRUBBER" },
+        { category: "GAS/AIR", 성상명: "질소", 유량: 4, 배관수량: 2, 압력: 3.2, 배관재질: "SUS316L", 설비모듈: "SCRUBBER" },
+        { category: "POWER", 전원종류: "AC", 전력값: 45, 부하전류: 68, 전압: 380, 차단기전류: 100, 설비모듈: "MAIN" },
+        { category: "POWER", 전원종류: "DC", 전력값: 5, 부하전류: 8, 전압: 24, 차단기전류: 10, 설비모듈: "MAIN" },
+        { category: "EXHAUST", 성상명: "FUME", 풍량: 12, "포트 수량": 2, 설비모듈: "MAIN" },
+        { category: "SPECIALITY GAS", 자재명: "SiH4", 배관수량: 1, 유량: 2, 설비모듈: "GAS CABINET" },
+        { category: "SPECIALITY GAS", 자재명: "PH3", 배관수량: 1, 유량: 1, 설비모듈: "GAS CABINET" },
+        { category: "WATER", 성상명: "PCW", 유량: 40, 배관수량: 2, 압력: 5, 설비모듈: "MAIN" },
+        { category: "CHEMICAL", 성상명: "IPA", 실사용량: 120 },
+        { category: "UPW", 성상명: "HOT DI", 실사용량: 8.5, 설비모듈: "MAIN" },
+        { category: "폐액", 자재명: "SiH4", 실사용량: 2.4 },
+        { category: "WASTE WATER", 성상명: "IWW1", 유량: 25, 배관수량: 1, 설비모듈: "MAIN" },
+      ],
+    },
+    {
+      code: "PD000102", dept: "ETCH", title: "ETCH 장비 B동 제원표", location: "평택 · P5 ph1 · 4F", pjt: "P5 ph1",
+      items: [
+        { category: "GAS/AIR", 성상명: "AR", 유량: 7, 배관수량: 3, 압력: 3.8, 배관재질: "SUS316L", 설비모듈: "SCRUBBER" },
+        { category: "GAS/AIR", 성상명: "H2", 유량: 5, 배관수량: 2, 압력: 3.0, 배관재질: "SUS316L", 설비모듈: "SCRUBBER" },
+        { category: "POWER", 전원종류: "AC", 전력값: 60, 부하전류: 90, 전압: 380, 차단기전류: 125, 설비모듈: "MAIN" },
+        { category: "EXHAUST", 성상명: "VOC", 풍량: 15, "포트 수량": 3, 설비모듈: "MAIN" },
+        { category: "WATER", 성상명: "PCW", 유량: 35, 배관수량: 3, 압력: 5.5, 설비모듈: "MAIN" },
+        { category: "CHEMICAL", 성상명: "황산", 실사용량: 80 },
+        { category: "UPW", 성상명: "HOT DI", 실사용량: 6.0, 설비모듈: "MAIN" },
+        { category: "폐액", 자재명: "ACID WASTE", 실사용량: 1.8 },
+        { category: "WASTE WATER", 성상명: "AKWW", 유량: 18, 배관수량: 1, 설비모듈: "MAIN" },
+        { category: "SPECIALITY GAS", 자재명: "WF6", 배관수량: 1, 유량: 1, 설비모듈: "GAS CABINET" },
+      ],
+    },
+  ];
+  var SEED_OWNERS = [
+    { name: "관리자", role: "ADMIN", majorProcesses: [], disciplines: [] },
+    { name: "CVD 담당자", role: "TECH_LEAD", majorProcesses: ["CVD"], disciplines: [] },
+    { name: "ETCH 담당자", role: "TECH_LEAD", majorProcesses: ["ETCH"], disciplines: [] },
+    { name: "배관 설계사", role: "DESIGNER", majorProcesses: [], disciplines: ["PIPING"] },
+  ];
+
+  // ===================================================================
+  // 대량 더미 데이터 채우기 (시드 고정 PRNG로 매번 동일하게 재현) —
+  // 위 두 데모 시트(PD000101/102)는 그대로 두고, 전체 대공정에 걸쳐
+  // 998개 제원표를 추가 생성해 총 1,000건을 채운다. 대공정/공종별
+  // 담당자도 전부 채워 자동 필터링·질의 생성이 실제처럼 동작하게 한다.
+  // ===================================================================
+  (function fillDummyData() {
+    function mulberry32(seed) {
+      var a = seed | 0;
+      return function () {
+        a = (a + 0x6D2B79F5) | 0;
+        var t = Math.imul(a ^ (a >>> 15), 1 | a);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    }
+    var rng = mulberry32(20260904);
+    function pick(arr) { return arr[Math.floor(rng() * arr.length)]; }
+    function chance(p) { return rng() < p; }
+    function randInt(min, max) { return Math.floor(rng() * (max - min + 1)) + min; }
+    function randFloat(min, max, decimals) {
+      var v = rng() * (max - min) + min;
+      var m = Math.pow(10, decimals == null ? 1 : decimals);
+      return Math.round(v * m) / m;
+    }
+
+    var GAS_STANDARD = ["N2", "O2", "AR", "CDA", "HE", "H2"];
+    var GAS_NONSTANDARD = ["GN2", "LN2", "질소", "N2 GAS"];
+    var SPGAS_MATERIALS = ["SiH4", "PH3", "WF6", "B2H6", "NF3", "C2F6", "AsH3", "GeH4", "HCl", "SiF4", "COS"];
+    var CHEM_SPECIES = ["IPA", "황산", "불산", "암모니아수", "과산화수소", "TMAH", "PR", "DEVELOPER", "BOE", "아세톤"];
+    var UPW_SPECIES = ["HOT DI", "COLD DI", "RO WATER", "DI WATER"];
+    var WATER_SPECIES = ["PCW", "ICW", "RCW"];
+    var WASTEWATER_SPECIES = ["IWW1", "IWW2", "AKWW", "OWW", "FWW"];
+    var EXHAUST_SPECIES = ["FUME", "VOC", "ACID EXHAUST", "ALKALI EXHAUST", "TOXIC EXHAUST", "GENERAL EXHAUST"];
+    var WASTE_MATERIALS = ["SiH4", "ACID WASTE", "ALKALI WASTE", "SOLVENT WASTE", "SLUDGE"];
+    var PIPE_MATERIALS = ["SUS316L", "SUS304", "PVC", "PVDF", "CPVC", "HDPE"];
+    var EQUIP_MODULES = ["MAIN", "SCRUBBER", "GAS CABINET", "SUB", "CDA UNIT", "CHILLER", "PUMP UNIT"];
+    var BUILDING_LETTERS = ["A", "B", "C", "D", "E", "F", "G", "H", "J", "K"];
+
+    function genGasItem() {
+      var nonstandard = chance(0.08);
+      var species = nonstandard ? pick(GAS_NONSTANDARD) : pick(GAS_STANDARD);
+      var canonicalKey = nonstandard ? (ALIAS_MAP[species] || species) : species;
+      var base = GAS_THRESHOLDS[canonicalKey] || 8;
+      var over = chance(0.1);
+      var flow = over ? randFloat(base + 1, base + 6, 1) : randFloat(Math.max(1, base - 6), base, 1);
+      return {
+        category: "GAS/AIR", 성상명: species, 유량: flow, 배관수량: randInt(1, 4),
+        압력: randFloat(2.5, 5.5, 1), 배관재질: pick(PIPE_MATERIALS), 설비모듈: pick(EQUIP_MODULES),
+      };
+    }
+    function genPowerItem() {
+      return chance(0.75)
+        ? { category: "POWER", 전원종류: "AC", 전력값: randInt(15, 120), 부하전류: randInt(20, 200), 전압: pick([220, 380, 440]), 차단기전류: pick([60, 100, 125, 150, 225]), 설비모듈: pick(EQUIP_MODULES) }
+        : { category: "POWER", 전원종류: "DC", 전력값: randInt(2, 15), 부하전류: randInt(3, 25), 전압: pick([12, 24, 48]), 차단기전류: pick([10, 15, 20]), 설비모듈: pick(EQUIP_MODULES) };
+    }
+    function genExhaustItem() {
+      return { category: "EXHAUST", 성상명: pick(EXHAUST_SPECIES), 풍량: randInt(5, 30), "포트 수량": randInt(1, 5), 설비모듈: pick(EQUIP_MODULES) };
+    }
+    function genSpGasItem() {
+      return { category: "SPECIALITY GAS", 자재명: pick(SPGAS_MATERIALS), 배관수량: randInt(1, 3), 유량: randFloat(0.5, 3, 1), 설비모듈: "GAS CABINET" };
+    }
+    function genWaterItem() {
+      return { category: "WATER", 성상명: pick(WATER_SPECIES), 유량: randInt(15, 60), 배관수량: randInt(1, 4), 압력: randFloat(3, 6, 1), 설비모듈: pick(EQUIP_MODULES) };
+    }
+    function genChemicalItem() {
+      return { category: "CHEMICAL", 성상명: pick(CHEM_SPECIES), 실사용량: randInt(20, 200) };
+    }
+    function genUpwItem() {
+      return { category: "UPW", 성상명: pick(UPW_SPECIES), 실사용량: randFloat(2, 15, 1), 설비모듈: pick(EQUIP_MODULES) };
+    }
+    function genWasteItem() {
+      return { category: "폐액", 자재명: pick(WASTE_MATERIALS), 실사용량: randFloat(0.5, 5, 1) };
+    }
+    function genWasteWaterItem() {
+      return { category: "WASTE WATER", 성상명: pick(WASTEWATER_SPECIES), 유량: randInt(5, 35), 배관수량: randInt(1, 3), 설비모듈: pick(EQUIP_MODULES) };
+    }
+    var GENERATORS = [
+      { gen: genGasItem, min: 2, max: 5, p: 1.0 },
+      { gen: genPowerItem, min: 1, max: 2, p: 0.95 },
+      { gen: genExhaustItem, min: 1, max: 2, p: 0.7 },
+      { gen: genSpGasItem, min: 1, max: 3, p: 0.55 },
+      { gen: genWaterItem, min: 1, max: 2, p: 0.8 },
+      { gen: genChemicalItem, min: 1, max: 2, p: 0.5 },
+      { gen: genUpwItem, min: 1, max: 1, p: 0.6 },
+      { gen: genWasteItem, min: 1, max: 1, p: 0.45 },
+      { gen: genWasteWaterItem, min: 1, max: 2, p: 0.65 },
+    ];
+    function genItems() {
+      var items = [];
+      GENERATORS.forEach(function (g) {
+        if (!chance(g.p)) return;
+        var n = randInt(g.min, g.max);
+        for (var i = 0; i < n; i++) items.push(g.gen());
+      });
+      return items.length ? items : [genGasItem()];
+    }
+
+    var extraSheets = [];
+    for (var i = 1; i <= 998; i++) {
+      var seq = 102 + i; // PD000101/102 다음부터 이어서 채번
+      var code = "PD" + String(seq).padStart(6, "0");
+      var dept = pick(MAJOR_PROCESSES);
+      var letter = pick(BUILDING_LETTERS);
+      var floor = randInt(1, 6);
+      extraSheets.push({
+        code: code, dept: dept, title: dept + " 장비 " + letter + "동 제원표",
+        location: "평택 · " + DEFAULT_PJT + " · " + floor + "F", pjt: DEFAULT_PJT, items: genItems(),
+      });
+    }
+    SEED_SHEETS = SEED_SHEETS.concat(extraSheets);
+
+    var extraOwners = [];
+    MAJOR_PROCESSES.forEach(function (mp) {
+      if (mp === "CVD" || mp === "ETCH") return; // 기존 시드에 이미 존재
+      extraOwners.push({ name: mp + " 담당자", role: "TECH_LEAD", majorProcesses: [mp], disciplines: [] });
+    });
+    DISCIPLINES.forEach(function (d) {
+      if (d.code === "PIPING") return; // 기존 시드에 이미 존재
+      extraOwners.push({ name: d.name + " 설계사", role: "DESIGNER", majorProcesses: [], disciplines: [d.code] });
+    });
+    SEED_OWNERS = SEED_OWNERS.concat(extraOwners);
+  })();
+
+  // ===================================================================
+  // 유틸
+  // ===================================================================
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+  function fmtNum(n) { return (Math.round(n * 100) / 100).toLocaleString("ko-KR"); }
+  function nowIso() { return new Date().toISOString(); }
+  function fmtTime(iso) {
+    try { return new Date(iso).toLocaleString("ko-KR", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }); }
+    catch (e) { return ""; }
+  }
+  function coerceValue(raw) {
+    var s = String(raw).trim();
+    return (s !== "" && !isNaN(s) && !isNaN(parseFloat(s))) ? parseFloat(s) : raw;
+  }
+  function uid() { return "id" + Math.random().toString(36).slice(2) + Date.now().toString(36); }
+
+  // ===================================================================
+  // 상태
+  // ===================================================================
+  var state = {
+    page: "dashboard", // dashboard | summary | queries | upload | owners | sheet
+    userId: null,
+    owners: [],          // [{id,name,role,majorProcesses,disciplines}]
+    sheets: {},           // code -> {code,dept,title,location,items,...}
+    threads: [],          // qa threads
+    corrections: [],
+    dashFilterMp: "", dashFilterStatus: "",
+    summaryFilterMp: "", summaryAutoApplied: false,
+    qFilterMp: "", qFilterDiscipline: "", qFilterType: "", qOpenOnly: false, qAutoApplied: false,
+    selectedThreadId: null,
+    selectedSheet: null,
+    activeTab: "items",
+    composerFor: null, // issue id being answered inline
+    newQueryOpen: false,
+    generating: false, genMessage: "",
+    uploadResult: null, uploadBusy: false,
+    lastUserIdForAutoFilter: undefined,
+    dbFilterMp: "", dbFilterCategory: "", dbSearch: "",
+    expandedVersion: null,
+    selectedPjt: "",
+  };
+
+  var store = null;
+  var db = null;
+
+  function currentOwner() {
+    if (!state.userId) return null;
+    return state.owners.filter(function (o) { return o.id === state.userId; })[0] || null;
+  }
+  function ownerLabel(o) {
+    var scope = o.role === "TECH_LEAD" ? (o.majorProcesses || []).join(", ")
+      : o.role === "DESIGNER" ? (o.disciplines || []).map(disciplineName).join(", ") : "";
+    return o.name + " · " + ROLE_LABEL[o.role] + (scope ? " (" + scope + ")" : "");
+  }
+  function threadById(id) { return state.threads.filter(function (t) { return t.id === id; })[0] || null; }
+
+  // ===================================================================
+  // 검증 / 집계 / 요약 로직 (backend services/rules, aggregation.py 미러링)
+  // ===================================================================
+  function computeIssues(items) {
+    var issues = [];
+    items.forEach(function (it, idx) {
+      if (it.category !== "GAS/AIR" || it.유량 == null) return;
+      var raw = String(it.성상명 || "").trim();
+      var canonical = ALIAS_MAP[raw] || ALIAS_MAP[raw.toUpperCase()] || null;
+      var species = (canonical || raw).toUpperCase();
+      var max = GAS_THRESHOLDS[species];
+      if (max != null && it.유량 > max) {
+        issues.push({
+          id: idx + "#유량", itemIdx: idx, field: "유량", severity: "ERROR", ruleId: "max_value_by_group",
+          message: "[" + species + "] 유량 OVER: " + fmtNum(it.유량) + "SLPM > 기준 " + max + "SLPM", suggestedValue: null,
+        });
+      }
+      if (GAS_ALLOWED.indexOf(raw.toUpperCase()) === -1) {
+        issues.push({
+          id: idx + "#성상명", itemIdx: idx, field: "성상명", severity: "WARN",
+          ruleId: canonical ? "alias_correction" : "standardized_enum",
+          message: canonical
+            ? "표준화되지 않은 표기: '" + it.성상명 + "' → 표준값 '" + canonical + "'"
+            : "표준화되지 않은 값: '" + it.성상명 + "' (허용값: " + GAS_ALLOWED.join(", ") + ")",
+          suggestedValue: canonical,
+        });
+      }
+    });
+    return issues;
+  }
+  function validateCandidate(sheetCode, itemIdx, field, candidateValue) {
+    var sheet = state.sheets[sheetCode];
+    var items = (sheet.items || []).map(function (it) { return Object.assign({}, it); });
+    if (!items[itemIdx]) return { errors: ["대상 항목을 찾을 수 없습니다."], warnings: [] };
+    items[itemIdx][field] = coerceValue(candidateValue);
+    var issues = computeIssues(items).filter(function (i) { return i.itemIdx === itemIdx && i.field === field; });
+    return {
+      errors: issues.filter(function (i) { return i.severity === "ERROR"; }).map(function (i) { return i.message; }),
+      warnings: issues.filter(function (i) { return i.severity === "WARN"; }).map(function (i) { return i.message; }),
+    };
+  }
+  function computeAggregation(items) {
+    var result = [];
+    CAT_ORDER.forEach(function (category) {
+      var spec = AGG_SPECS[category];
+      var totals = {};
+      items.forEach(function (it) {
+        if (it.category !== category) return;
+        var groupKey = it[spec.groupBy] || "(미지정)";
+        var amount = 1, any = false;
+        spec.fields.forEach(function (f) { if (it[f] != null) any = true; amount *= (it[f] || 0); });
+        if (!any) return;
+        totals[groupKey] = (totals[groupKey] || 0) + amount;
+      });
+      var keys = Object.keys(totals);
+      if (keys.length) {
+        var sum = keys.reduce(function (a, k) { return a + totals[k]; }, 0);
+        result.push({ category: category, unit: spec.unit, groupBy: spec.groupBy, totals: totals, sum: sum, distinctCount: keys.length });
+      }
+    });
+    return result;
+  }
+  function sheetList() {
+    return Object.keys(state.sheets).map(function (c) { return state.sheets[c]; })
+      .filter(function (s) { return !state.selectedPjt || s.pjt === state.selectedPjt; });
+  }
+  function sheetsForMp(mp) { return sheetList().filter(function (s) { return !mp || s.dept === mp; }); }
+  function computeSummary(mp) {
+    var sheets = sheetsForMp(mp);
+    var allItems = [];
+    var openIssueCount = 0;
+    sheets.forEach(function (s) {
+      var items = s.items || [];
+      allItems = allItems.concat(items);
+      openIssueCount += computeIssues(items).length;
+    });
+    var agg = computeAggregation(allItems);
+    var materials = {};
+    allItems.forEach(function (it) {
+      if (GCS_CATEGORIES.indexOf(it.category) !== -1 && it.자재명) materials[it.자재명] = true;
+    });
+    var deptSet = {};
+    sheets.forEach(function (s) { deptSet[s.dept] = true; });
+    var relevantThreads = state.threads.filter(function (t) { return deptSet[t.majorProcess]; });
+    return {
+      sheetCount: sheets.length, openIssueCount: openIssueCount, categories: agg,
+      gcsMaterials: Object.keys(materials).sort(), gcsMaterialCount: Object.keys(materials).length,
+      openAutoCount: relevantThreads.filter(function (t) { return t.queryType === "AUTO" && OPEN_STATUSES.indexOf(t.status) !== -1; }).length,
+      openManualCount: relevantThreads.filter(function (t) { return t.queryType === "MANUAL" && OPEN_STATUSES.indexOf(t.status) !== -1; }).length,
+    };
+  }
+
+  // ===================================================================
+  // AUTO 질의 일괄 생성 / 승인 / MANUAL 4단계
+  // ===================================================================
+  function pickTechLeadFor(mp) {
+    var cands = state.owners.filter(function (o) { return o.role === "TECH_LEAD" && (o.majorProcesses || []).indexOf(mp) !== -1; });
+    return cands.length === 1 ? cands[0].name : null;
+  }
+  function generateAutoQueries() {
+    var alreadyTargeted = {};
+    state.threads.forEach(function (t) {
+      if (t.queryType !== "AUTO" || t.status === "REJECTED") return;
+      (t.targets || []).forEach(function (tg) { alreadyTargeted[tg.sheetCode + "#" + tg.itemIdx + "#" + tg.field] = true; });
+    });
+    var groups = {};
+    Object.keys(state.sheets).forEach(function (code) {
+      var sheet = state.sheets[code];
+      var items = sheet.items || [];
+      computeIssues(items).forEach(function (iss) {
+        if (!iss.suggestedValue) return;
+        var key = code + "#" + iss.itemIdx + "#" + iss.field;
+        if (alreadyTargeted[key]) return;
+        var asIs = items[iss.itemIdx][iss.field];
+        var gKey = [sheet.pjt, sheet.dept, iss.field, asIs, iss.suggestedValue].join("||");
+        if (!groups[gKey]) groups[gKey] = { pjt: sheet.pjt, majorProcess: sheet.dept, field: iss.field, asIs: asIs, toBe: iss.suggestedValue, targets: [] };
+        groups[gKey].targets.push({ sheetCode: code, itemIdx: iss.itemIdx, field: iss.field });
+      });
+    });
+    var newGroups = Object.keys(groups).map(function (k) { return groups[k]; });
+    if (!newGroups.length) return Promise.resolve(0);
+    var discipline = CATEGORY_TO_DISCIPLINE["GAS/AIR"];
+    return Promise.all(newGroups.map(function (g) {
+      return store.addThread({
+        queryType: "AUTO", pjt: g.pjt, majorProcess: g.majorProcess, discipline: discipline, fieldLabel: g.field,
+        asIsValue: String(g.asIs), toBeValue: String(g.toBe), targets: g.targets, status: "OPEN",
+        title: "[자동] " + g.field + " '" + g.asIs + "' → '" + g.toBe + "' (" + g.targets.length + "건)",
+        question: null, createdBy: "시스템(자동 생성)", createdAt: nowIso(), updatedAt: nowIso(),
+        assignedOwnerName: pickTechLeadFor(g.majorProcess), messages: [],
+      });
+    })).then(function (res) { return res.length; });
+  }
+  function applyValueToSheet(sheetCode, itemIdx, field, newValue, source, threadId) {
+    var sheet = state.sheets[sheetCode];
+    if (!sheet) return Promise.resolve();
+    var items = (sheet.items || []).map(function (it) { return Object.assign({}, it); });
+    var it = items[itemIdx];
+    if (!it) return Promise.resolve();
+    var oldValue = it[field];
+    it[field] = coerceValue(newValue);
+    var newDoc = Object.assign({}, sheet, { items: items });
+    return saveSheetVersion(sheetCode, newDoc, source).then(function () {
+      return store.addCorrection({
+        sheetCode: sheetCode, itemIdx: itemIdx, field: field, oldValue: String(oldValue == null ? "" : oldValue),
+        newValue: String(newValue), source: source, threadId: threadId || null, appliedBy: (currentOwner() || {}).name || "익명", appliedAt: nowIso(),
+      });
+    });
+  }
+  function pushMessage(thread, role, content) {
+    return (thread.messages || []).concat([{ authorName: (currentOwner() || {}).name || "익명", role: role, content: content, at: nowIso() }]);
+  }
+  function decideAuto(threadId, approve) {
+    var t = threadById(threadId);
+    if (!t) return Promise.resolve();
+    var patch = {
+      status: approve ? "RESOLVED" : "REJECTED", updatedAt: nowIso(),
+      messages: pushMessage(t, "COMMENT", approve
+        ? "자동 질의 승인. TO-BE '" + t.toBeValue + "' 반영됨 (" + t.targets.length + "건)."
+        : "미승인 처리되었습니다."),
+    };
+    var chain = store.updateThread(threadId, patch);
+    if (approve) {
+      chain = chain.then(function () {
+        return Promise.all(t.targets.map(function (tg) {
+          return applyValueToSheet(tg.sheetCode, tg.itemIdx, tg.field, t.toBeValue, "AUTO", threadId);
+        }));
+      });
+    }
+    return chain;
+  }
+  function submitTechAnswer(threadId, content) {
+    var t = threadById(threadId);
+    if (!t) return Promise.resolve();
+    return store.updateThread(threadId, { status: "TECH_ANSWERED", updatedAt: nowIso(), messages: pushMessage(t, "ANSWER", content) });
+  }
+  function decideAnswer(threadId, approve) {
+    var t = threadById(threadId);
+    if (!t) return Promise.resolve();
+    return store.updateThread(threadId, {
+      status: approve ? "ANSWER_APPROVED" : "OPEN", updatedAt: nowIso(),
+      messages: pushMessage(t, "COMMENT", approve ? "답변을 승인했습니다. 값 수정을 진행해 주세요." : "답변을 반려했습니다. 다시 답변해 주세요."),
+    });
+  }
+  function proposeValue(threadId, newValue) {
+    var t = threadById(threadId);
+    if (!t) return Promise.resolve({ error: "질의를 찾을 수 없습니다." });
+    var tg = t.targets[0];
+    var check = validateCandidate(tg.sheetCode, tg.itemIdx, tg.field, newValue);
+    if (check.errors.length) return Promise.resolve({ error: "값 제안이 검증 규칙을 통과하지 못했습니다.", errors: check.errors, warnings: check.warnings });
+    return store.updateThread(threadId, {
+      status: "VALUE_PROPOSED", toBeValue: String(newValue), updatedAt: nowIso(),
+      messages: pushMessage(t, "COMMENT", "새 값 제안: '" + newValue + "'" + (check.warnings.length ? " (경고: " + check.warnings.join("; ") + ")" : "")),
+    }).then(function () { return {}; });
+  }
+  function decideFinal(threadId, approve) {
+    var t = threadById(threadId);
+    if (!t) return Promise.resolve();
+    var chain = store.updateThread(threadId, {
+      status: approve ? "RESOLVED" : "ANSWER_APPROVED", updatedAt: nowIso(),
+      messages: pushMessage(t, "COMMENT", approve ? "최종 승인. DB에 반영되었습니다." : "반려되었습니다. 값을 다시 제안해 주세요."),
+    });
+    if (approve) {
+      chain = chain.then(function () {
+        var tg = t.targets[0];
+        return applyValueToSheet(tg.sheetCode, tg.itemIdx, tg.field, t.toBeValue, "MANUAL", threadId);
+      });
+    }
+    return chain;
+  }
+
+  // ===================================================================
+  // 로컬 엑셀 업로드 파서 (backend services/excel_import.py 미러링)
+  // ===================================================================
+  var COMMON_FIELD_NAMES = ["위치", "라인", "층", "대공정", "PRC", "MODEL", "MAKER", "건설코드", "설비대수"];
+  var HEADER_LABEL_HINTS = COMMON_FIELD_NAMES.concat([
+    "유량", "성상명", "자재명", "압력", "배관수량", "배관재질", "설비모듈",
+    "전력값", "부하전류", "전압", "차단기전류", "전원종류", "풍량", "포트 수량", "실사용량",
+  ]);
+  var CONSTRUCTION_CODE_RE = /^P[A-Za-z0-9]{7}(-\d{2})?$/;
+  function cellText(v) { return v === null || v === undefined || String(v).trim() === "" ? "" : String(v).trim(); }
+  function splitUnit(text) { var m = /^(.*?)\(([^()]+)\)\s*$/.exec(text); return m ? [m[1].trim(), m[2].trim()] : [text, null]; }
+  function isNumericText(s) { return s !== "" && !isNaN(s) && !isNaN(parseFloat(s)); }
+  function detectHeaderRows(rows) {
+    var maxScan = Math.min(10, rows.length);
+    var bestRow = 0, bestScore = -1;
+    for (var r = 0; r < maxScan; r++) {
+      var texts = (rows[r] || []).map(cellText).filter(function (t) { return t !== ""; });
+      if (!texts.length) continue;
+      var score = texts.filter(function (t) { return HEADER_LABEL_HINTS.indexOf(splitUnit(t)[0]) !== -1; }).length;
+      if (score > bestScore) { bestScore = score; bestRow = r; }
+    }
+    var labelRow = bestScore > 0 ? bestRow : 0;
+    var categoryRow = labelRow > 0 ? labelRow - 1 : labelRow;
+    if (categoryRow >= 0 && categoryRow !== labelRow) {
+      var catTexts = (rows[categoryRow] || []).map(cellText).filter(function (t) { return t !== ""; });
+      var labelTexts = (rows[labelRow] || []).map(cellText).filter(function (t) { return t !== ""; });
+      var sameSet = catTexts.length === labelTexts.length && catTexts.every(function (t) { return labelTexts.indexOf(t) !== -1; });
+      if (!catTexts.length || sameSet) categoryRow = labelRow;
+    }
+    return { categoryRow: categoryRow, labelRow: labelRow, dataStartRow: labelRow + 1, score: Math.max(bestScore, 0) };
+  }
+  function parseGroupedWorkbook(rows, opts) {
+    var det = detectHeaderRows(rows);
+    var categoryRow = det.categoryRow, labelRow = det.labelRow, dataStartRow = det.dataStartRow;
+    var maxCol = rows.reduce(function (m, r) { return Math.max(m, (r || []).length); }, 0);
+    var colInfo = {};
+    for (var c = 0; c < maxCol; c++) {
+      var rawLabel = cellText((rows[labelRow] || [])[c]);
+      if (!rawLabel) continue;
+      var parts = splitUnit(rawLabel);
+      var baseLabel = parts[0];
+      var category = categoryRow !== labelRow ? cellText((rows[categoryRow] || [])[c]) : "";
+      var isCommon = COMMON_FIELD_NAMES.indexOf(baseLabel) !== -1;
+      colInfo[c] = { baseLabel: baseLabel, category: isCommon ? "" : category };
+    }
+    var codeCol = null, mpCol = null;
+    Object.keys(colInfo).forEach(function (c) {
+      if (colInfo[c].baseLabel === "건설코드") codeCol = +c;
+      if (colInfo[c].baseLabel === "대공정") mpCol = +c;
+    });
+    var warnings = [];
+    if (det.score <= 2) {
+      warnings.push("헤더 행을 확신 있게 인식하지 못했습니다 (추정: 대분류 " + (categoryRow + 1) + "행 / 세부항목 " + (labelRow + 1) + "행 / 데이터 " + (dataStartRow + 1) + "행부터).");
+    }
+    var currentCode = opts.constructionCodeOverride || null, currentMp = null;
+    var rowCode = {}, rowMp = {};
+    for (var r1 = dataStartRow; r1 < rows.length; r1++) {
+      var codeText = codeCol !== null ? cellText((rows[r1] || [])[codeCol]) : "";
+      if (codeText) currentCode = codeText;
+      rowCode[r1] = currentCode;
+      var mpText = mpCol !== null ? cellText((rows[r1] || [])[mpCol]) : "";
+      if (mpText) currentMp = mpText;
+      rowMp[r1] = currentMp;
+    }
+    var groupsOrder = [], groupRows = {}, ungroupedRows = [];
+    for (var r2 = dataStartRow; r2 < rows.length; r2++) {
+      var rowHasData = Object.keys(colInfo).some(function (c) { return cellText((rows[r2] || [])[+c]) !== ""; });
+      if (!rowHasData) continue;
+      var code2 = rowCode[r2];
+      if (!code2) { ungroupedRows.push(r2 + 1); continue; }
+      if (!groupRows[code2]) { groupRows[code2] = []; groupsOrder.push(code2); }
+      groupRows[code2].push(r2);
+    }
+    if (ungroupedRows.length) warnings.push("건설코드를 확인할 수 없어 가져오지 못한 행: " + ungroupedRows.join(", "));
+    var groups = [];
+    groupsOrder.forEach(function (code) {
+      if (!CONSTRUCTION_CODE_RE.test(code)) warnings.push("'" + code + "' 건설코드 형식이 규칙(P+영숫자7자리)과 다릅니다. 그대로 반영했습니다.");
+      var mpVotes = {}, commonValues = {}, itemsByRowCat = {};
+      groupRows[code].forEach(function (r3) {
+        if (rowMp[r3]) mpVotes[rowMp[r3]] = (mpVotes[rowMp[r3]] || 0) + 1;
+        Object.keys(colInfo).forEach(function (cKey) {
+          var c = +cKey, info = colInfo[c];
+          var text = cellText((rows[r3] || [])[c]);
+          if (!text) return;
+          if (COMMON_FIELD_NAMES.indexOf(info.baseLabel) !== -1) {
+            if (commonValues[info.baseLabel] === undefined) commonValues[info.baseLabel] = text;
+            return;
+          }
+          itemsByRowCat[r3] = itemsByRowCat[r3] || {};
+          itemsByRowCat[r3][info.category] = itemsByRowCat[r3][info.category] || { category: info.category };
+          itemsByRowCat[r3][info.category][info.baseLabel] = isNumericText(text) ? parseFloat(text) : text;
+        });
+      });
+      var items = [];
+      Object.keys(itemsByRowCat).forEach(function (rk) {
+        Object.keys(itemsByRowCat[rk]).forEach(function (cat) { if (cat) items.push(itemsByRowCat[rk][cat]); });
+      });
+      var majorProcessRaw = null, bestVotes = 0;
+      Object.keys(mpVotes).forEach(function (k) { if (mpVotes[k] > bestVotes) { bestVotes = mpVotes[k]; majorProcessRaw = k; } });
+      groups.push({
+        code: code, items: items, majorProcessRaw: majorProcessRaw,
+        location: [commonValues["위치"], commonValues["라인"], commonValues["층"]].filter(Boolean).join(" · "),
+      });
+    });
+    if (!groups.length) throw new Error("건설코드를 하나도 인식하지 못했습니다. '건설코드 대체값'을 입력하거나 시트의 건설코드 열을 확인해 주세요.");
+    return { groups: groups, warnings: warnings };
+  }
+  function resolveMajorProcess(raw, defaultDept, warnings, code) {
+    if (!raw) return defaultDept;
+    var norm = raw.trim().toUpperCase();
+    var found = MAJOR_PROCESSES.filter(function (mp) { return mp.toUpperCase() === norm; })[0];
+    if (found) return found;
+    warnings.push("'" + code + "' 그룹의 대공정 표기 '" + raw + "'를 인식하지 못해 업로드 시 선택한 대공정(" + defaultDept + ")으로 처리했습니다.");
+    return defaultDept;
+  }
+
+  // ===================================================================
+  // 저장소: db 캐패빌리티 있으면 실시간 공유, 없으면 이 브라우저 세션 로컬 저장
+  // ===================================================================
+  function makeLocalStore() {
+    var owners = [], sheets = {}, threads = [], corrections = [];
+    var listeners = { owners: [], sheets: [], threads: [], corrections: [] };
+    function notify(key, getter) { listeners[key].forEach(function (cb) { cb(getter()); }); }
+    function watch(key, cb, getter) {
+      listeners[key].push(cb);
+      cb(getter());
+      return function () { listeners[key] = listeners[key].filter(function (x) { return x !== cb; }); };
+    }
+    return {
+      isLive: false,
+      addOwner: function (data) { var doc = Object.assign({ id: uid() }, data); owners.push(doc); notify("owners", function () { return owners.slice(); }); return Promise.resolve(doc.id); },
+      setSheet: function (code, doc) { sheets[code] = Object.assign({}, doc, { code: code }); notify("sheets", function () { return Object.assign({}, sheets); }); return Promise.resolve(); },
+      addThread: function (data) { var doc = Object.assign({ id: uid() }, data); threads.push(doc); notify("threads", function () { return threads.slice(); }); return Promise.resolve(doc.id); },
+      updateThread: function (id, patch) { var t = threads.filter(function (x) { return x.id === id; })[0]; if (t) Object.assign(t, patch); notify("threads", function () { return threads.slice(); }); return Promise.resolve(); },
+      addCorrection: function (data) { corrections.push(Object.assign({ id: uid() }, data)); notify("corrections", function () { return corrections.slice(); }); return Promise.resolve(); },
+      watchOwners: function (cb) { return watch("owners", cb, function () { return owners.slice(); }); },
+      watchSheets: function (cb) { return watch("sheets", cb, function () { return Object.assign({}, sheets); }); },
+      watchThreads: function (cb) { return watch("threads", cb, function () { return threads.slice(); }); },
+      watchCorrections: function (cb) { return watch("corrections", cb, function () { return corrections.slice(); }); },
+    };
+  }
+  function makeDbStore(dbNs) {
+    var ownersCol = dbNs.collection("owners");
+    var sheetsCol = dbNs.collection("spec_sheets");
+    var threadsCol = dbNs.collection("qa_threads");
+    var correctionsCol = dbNs.collection("corrections");
+    function watchCollection(col, cb) {
+      return col.onSnapshot(function (snap) {
+        cb(snap.docs.map(function (d) { return Object.assign({ id: d.id }, d.data()); }));
+      }, function () { cb([]); });
+    }
+    return {
+      isLive: true,
+      addOwner: function (data) { return ownersCol.add(data).then(function (ref) { return ref.id; }); },
+      setSheet: function (code, doc) { var body = Object.assign({}, doc); delete body.id; return sheetsCol.doc(code).set(body); },
+      addThread: function (data) { return threadsCol.add(data).then(function (ref) { return ref.id; }); },
+      updateThread: function (id, patch) { return threadsCol.doc(id).update(patch); },
+      addCorrection: function (data) { return correctionsCol.add(data); },
+      watchOwners: function (cb) { return watchCollection(ownersCol, cb); },
+      watchSheets: function (cb) {
+        return watchCollection(sheetsCol, function (docs) {
+          var map = {}; docs.forEach(function (d) { map[d.id] = d; }); cb(map);
+        });
+      },
+      watchThreads: function (cb) { return watchCollection(threadsCol, cb); },
+      watchCorrections: function (cb) { return watchCollection(correctionsCol, cb); },
+    };
+  }
+  // ---- 건설코드별 버전 이력: spec_sheets 문서 안에 ver/versionHistory를 같이 저장해
+  // 별도 컬렉션 없이(문서 5,000개 한도 절약) 재업로드/질의 반영마다 이전 버전을 보존한다 ----
+  function saveSheetVersion(code, patchDoc, source) {
+    var prev = state.sheets[code];
+    var nextVer = prev ? (prev.ver || 1) + 1 : 1;
+    var history = prev ? (prev.versionHistory || []).slice() : [];
+    if (prev) {
+      history.unshift({
+        ver: prev.ver || 1, dept: prev.dept, title: prev.title, location: prev.location, pjt: prev.pjt,
+        items: prev.items, versionSource: prev.versionSource || "SEED", archivedAt: nowIso(),
+      });
+      if (history.length > 20) history = history.slice(0, 20);
+    }
+    var newDoc = Object.assign({}, patchDoc, {
+      code: code, ver: nextVer, versionSource: source, updatedAt: nowIso(), versionHistory: history,
+    });
+    return store.setSheet(code, newDoc);
+  }
+  function seedIfEmpty() {
+    if (!store.isLive) {
+      SEED_OWNERS.forEach(function (o) { store.addOwner(o); });
+      SEED_SHEETS.forEach(function (s) { saveSheetVersion(s.code, s, "SEED"); });
+      return;
+    }
+    var lock = db.doc("system/seed_lock");
+    lock.acquire({ holder: "seed", ttlMs: 8000 }).then(function (res) {
+      if (!res.acquired) return;
+      return Promise.all([ownersColGet(), sheetsColGet()]).then(function (r) {
+        var ownersEmpty = r[0], sheetsEmpty = r[1];
+        var jobs = [];
+        if (ownersEmpty) SEED_OWNERS.forEach(function (o) { jobs.push(store.addOwner(o)); });
+        if (sheetsEmpty) SEED_SHEETS.forEach(function (s) { jobs.push(saveSheetVersion(s.code, s, "SEED")); });
+        return Promise.all(jobs);
+      });
+    }).catch(function () {});
+  }
+  function ownersColGet() { return db.collection("owners").limit(1).get().then(function (snap) { return snap.empty; }); }
+  function sheetsColGet() { return db.collection("spec_sheets").limit(1).get().then(function (snap) { return snap.empty; }); }
+
+  // ===================================================================
+  // 렌더링: topbar / page-nav
+  // ===================================================================
+  var PAGES = [
+    { id: "dashboard", label: "대시보드" },
+    { id: "db", label: "제원 DB" },
+    { id: "summary", label: "SUMMARY" },
+    { id: "queries", label: "질의응답" },
+    { id: "upload", label: "제원표 업로드" },
+    { id: "owners", label: "사용자 관리" },
+  ];
+  function goPage(id) {
+    state.page = id;
+    if (id === "queries") applyQueriesAutoFilter();
+    if (id === "summary") applySummaryAutoFilter();
+    if (id === "dashboard") applyDashboardAutoFilter();
+    render();
+  }
+  function renderUserSelect() {
+    var sel = document.getElementById("userSelect");
+    var owners = state.owners.slice().sort(function (a, b) { return a.name.localeCompare(b.name, "ko"); });
+    sel.innerHTML = '<option value="">(사용자 미선택 - 열람만)</option>' + owners.map(function (o) {
+      return '<option value="' + o.id + '">' + esc(ownerLabel(o)) + "</option>";
+    }).join("");
+    sel.value = state.userId || "";
+    sel.onchange = function () {
+      state.userId = sel.value || null;
+      applyDashboardAutoFilter(); applySummaryAutoFilter(); applyQueriesAutoFilter();
+      render();
+    };
+  }
+  function renderPjtSelect() {
+    var sel = document.getElementById("pjtSelect");
+    sel.innerHTML = '<option value="">전체 PJT</option>' + pjtOptions().map(function (p) {
+      return '<option value="' + p + '">' + p + "</option>";
+    }).join("");
+    sel.value = state.selectedPjt || "";
+    sel.onchange = function () { state.selectedPjt = sel.value; render(); };
+  }
+  function renderPageNav() {
+    var owner = currentOwner();
+    document.getElementById("pageNav").innerHTML = PAGES.map(function (p) {
+      var dim = p.id === "upload" && (!owner || owner.role !== "ADMIN");
+      var cls = "nav-btn" + (state.page === p.id ? " active" : "") + (dim ? " dim" : "");
+      return '<button class="' + cls + '" data-page="' + p.id + '">' + p.label + (dim ? " 🔒" : "") + "</button>";
+    }).join("");
+    Array.prototype.forEach.call(document.querySelectorAll("#pageNav .nav-btn"), function (btn) {
+      btn.addEventListener("click", function () { goPage(btn.dataset.page); });
+    });
+  }
+
+  // ---- item5 패턴: 담당자 전환 시 대시보드/SUMMARY/질의응답 자동 필터링 ----
+  function applyDashboardAutoFilter() {
+    var o = currentOwner();
+    if (o && o.role === "TECH_LEAD" && (o.majorProcesses || []).length === 1) state.dashFilterMp = o.majorProcesses[0];
+  }
+  function applySummaryAutoFilter() {
+    var o = currentOwner();
+    if (o && o.role === "TECH_LEAD" && (o.majorProcesses || []).length === 1) { state.summaryFilterMp = o.majorProcesses[0]; state.summaryAutoApplied = true; }
+    else if (state.summaryAutoApplied) { state.summaryFilterMp = ""; state.summaryAutoApplied = false; }
+  }
+  function applyQueriesAutoFilter() {
+    var o = currentOwner();
+    if (o && o.role === "TECH_LEAD" && (o.majorProcesses || []).length === 1) {
+      state.qFilterMp = o.majorProcesses[0]; state.qFilterDiscipline = ""; state.qOpenOnly = true; state.qAutoApplied = true;
+    } else if (o && o.role === "DESIGNER" && (o.disciplines || []).length === 1) {
+      state.qFilterDiscipline = o.disciplines[0]; state.qFilterMp = ""; state.qOpenOnly = true; state.qAutoApplied = true;
+    } else if (state.qAutoApplied) {
+      state.qFilterMp = ""; state.qFilterDiscipline = ""; state.qOpenOnly = false; state.qAutoApplied = false;
+    }
+  }
+
+  // ===================================================================
+  // 대시보드
+  // ===================================================================
+  function renderDashboard(main) {
+    var owner = currentOwner();
+    var sheets = sheetList();
+    var byCode = sheets.slice().sort(function (a, b) { return a.code.localeCompare(b.code); });
+    var filtered = byCode.filter(function (s) {
+      if (state.dashFilterMp && s.dept !== state.dashFilterMp) return false;
+      var openCount = computeIssues(s.items || []).length;
+      if (state.dashFilterStatus === "open" && openCount === 0) return false;
+      if (state.dashFilterStatus === "resolved" && openCount > 0) return false;
+      return true;
+    });
+    var rows = filtered.map(function (s) {
+      var issues = computeIssues(s.items || []);
+      var errCount = issues.filter(function (i) { return i.severity === "ERROR"; }).length;
+      var chip = issues.length === 0 ? '<span class="chip ok">이슈 없음</span>'
+        : '<span class="chip ' + (errCount ? "error" : "warn") + '">미해결 ' + issues.length + "건</span>";
+      return (
+        '<tr class="clickable" data-code="' + esc(s.code) + '">' +
+          "<td><a class=\"code-link\" href=\"#\" data-code=\"" + esc(s.code) + "\">" + esc(s.code) + "</a> <span class=\"chip neutral\">v" + (s.ver || 1) + "</span></td>" +
+          "<td><span class=\"chip dept\">" + esc(s.dept) + "</span></td>" +
+          "<td>" + esc(s.title || "") + "</td>" +
+          "<td class=\"muted\">" + esc(s.location || "") + "</td>" +
+          "<td>" + chip + "</td>" +
+        "</tr>"
+      );
+    }).join("");
+    main.innerHTML =
+      '<div class="page">' +
+        "<h1 style=\"font-size:19px;margin-bottom:4px\">제원표 대시보드</h1>" +
+        '<p style="font-size:12.5px;color:var(--ink-muted);margin:0 0 16px">' +
+          (owner && owner.role === "TECH_LEAD" && (owner.majorProcesses || []).length === 1
+            ? owner.name + " 님의 담당 대공정(" + owner.majorProcesses[0] + ")으로 자동 필터링됨 — 아래에서 직접 바꿀 수 있습니다."
+            : "대공정/상태별로 제원표와 미해결 이슈 건수를 봅니다.") +
+        "</p>" +
+        '<div class="panel"><div class="filter-bar">' +
+          '<div class="field"><label class="field-label">대공정</label><select id="dashMp"><option value="">전체</option>' +
+            MAJOR_PROCESSES.map(function (mp) { return '<option value="' + mp + '"' + (state.dashFilterMp === mp ? " selected" : "") + ">" + mp + "</option>"; }).join("") +
+          "</select></div>" +
+          '<div class="field"><label class="field-label">상태</label><select id="dashStatus">' +
+            '<option value="">전체</option><option value="open"' + (state.dashFilterStatus === "open" ? " selected" : "") + '>미해결 이슈 있음</option>' +
+            '<option value="resolved"' + (state.dashFilterStatus === "resolved" ? " selected" : "") + ">이슈 없음</option>" +
+          "</select></div>" +
+        "</div></div>" +
+        '<div class="panel">' +
+          (rows
+            ? '<div style="overflow-x:auto"><table class="sheet-table"><thead><tr><th>건설코드</th><th>대공정</th><th>제목</th><th>위치</th><th>상태</th></tr></thead><tbody>' + rows + "</tbody></table></div>"
+            : '<div class="empty-state"><div class="big">📄</div>조건에 맞는 제원표가 없습니다.</div>') +
+        "</div>" +
+      "</div>";
+    document.getElementById("dashMp").onchange = function (e) { state.dashFilterMp = e.target.value; render(); };
+    document.getElementById("dashStatus").onchange = function (e) { state.dashFilterStatus = e.target.value; render(); };
+    Array.prototype.forEach.call(main.querySelectorAll("[data-code]"), function (el) {
+      el.addEventListener("click", function (e) { e.preventDefault(); openSheet(el.dataset.code); });
+    });
+  }
+  function openSheet(code) {
+    state.page = "sheet"; state.selectedSheet = code; state.activeTab = "items"; state.composerFor = null;
+    render();
+  }
+
+  // ===================================================================
+  // 제원 DB (업로드된 모든 제원표의 항목을 한 표로 조회하는 화면)
+  // ===================================================================
+  var DB_ROW_LIMIT = 500;
+  function renderDbPage(main) {
+    var q = (state.dbSearch || "").trim().toLowerCase();
+    var allRows = [];
+    sheetList().slice().sort(function (a, b) { return a.code.localeCompare(b.code); }).forEach(function (s) {
+      if (state.dbFilterMp && s.dept !== state.dbFilterMp) return;
+      (s.items || []).forEach(function (it, idx) {
+        if (state.dbFilterCategory && it.category !== state.dbFilterCategory) return;
+        var keyField = it.성상명 || it.전원종류 || it.자재명 || "-";
+        if (q) {
+          var hay = (s.code + " " + keyField + " " + (it.설비모듈 || "")).toLowerCase();
+          if (hay.indexOf(q) === -1) return;
+        }
+        allRows.push({ sheet: s, it: it, keyField: keyField });
+      });
+    });
+    var total = allRows.length;
+    var rows = allRows.slice(0, DB_ROW_LIMIT);
+    var tableRows = rows.map(function (r) {
+      var it = r.it, s = r.sheet;
+      var specBits = [];
+      ["유량", "배관수량", "압력", "배관재질", "전력값", "부하전류", "전압", "차단기전류", "실사용량", "풍량", "포트 수량"].forEach(function (f) {
+        if (it[f] != null) specBits.push(f + " " + (typeof it[f] === "number" ? fmtNum(it[f]) : it[f]));
+      });
+      return (
+        '<tr class="clickable" data-code="' + esc(s.code) + '">' +
+          "<td><a class=\"code-link\" href=\"#\" data-code=\"" + esc(s.code) + "\">" + esc(s.code) + "</a> <span class=\"chip neutral\">v" + (s.ver || 1) + "</span></td>" +
+          "<td><span class=\"chip dept\">" + esc(s.dept) + "</span></td>" +
+          "<td>" + esc(it.category) + "</td>" +
+          "<td>" + esc(r.keyField) + "</td>" +
+          "<td class=\"muted\" style=\"font-size:11.5px\">" + esc(specBits.join(" · ")) + "</td>" +
+          "<td class=\"muted\">" + esc(it.설비모듈 || "") + "</td>" +
+        "</tr>"
+      );
+    }).join("");
+    main.innerHTML =
+      '<div class="page">' +
+        "<h1 style=\"font-size:19px;margin-bottom:4px\">제원 DB</h1>" +
+        '<p style="font-size:12.5px;color:var(--ink-muted);margin:0 0 16px">업로드된 모든 제원표의 항목을 하나의 표(DB 조회 화면)로 봅니다. 각 행은 한 제원표 안의 항목 하나이며, 건설코드 옆 v{n}은 그 제원표의 현재 버전입니다.</p>' +
+        '<div class="panel"><div class="filter-bar">' +
+          '<div class="field"><label class="field-label">대공정</label><select id="dbMp"><option value="">전체</option>' +
+            MAJOR_PROCESSES.map(function (mp) { return '<option value="' + mp + '"' + (state.dbFilterMp === mp ? " selected" : "") + ">" + mp + "</option>"; }).join("") +
+          "</select></div>" +
+          '<div class="field"><label class="field-label">대분류</label><select id="dbCategory"><option value="">전체</option>' +
+            CAT_ORDER.map(function (c) { return '<option value="' + c + '"' + (state.dbFilterCategory === c ? " selected" : "") + ">" + c + "</option>"; }).join("") +
+          "</select></div>" +
+          '<div class="field grow"><label class="field-label">검색 (건설코드/항목명/설비모듈)</label><input class="text" id="dbSearch" value="' + esc(state.dbSearch) + '" placeholder="예: PD0001, N2, SCRUBBER"></div>' +
+        "</div></div>" +
+        '<div class="panel">' +
+          '<p style="font-size:12px;color:var(--ink-muted);margin:0 0 10px">총 ' + total + "건" + (total > DB_ROW_LIMIT ? " 중 상위 " + DB_ROW_LIMIT + "건만 표시 — 검색/필터로 좁혀 보세요." : "") + "</p>" +
+          (tableRows
+            ? '<div style="overflow-x:auto"><table class="sheet-table"><thead><tr><th>건설코드</th><th>대공정</th><th>대분류</th><th>항목명</th><th>주요 값</th><th>설비모듈</th></tr></thead><tbody>' + tableRows + "</tbody></table></div>"
+            : '<div class="empty-state"><div class="big">🗄</div>조건에 맞는 항목이 없습니다.</div>') +
+        "</div>" +
+      "</div>";
+    document.getElementById("dbMp").onchange = function (e) { state.dbFilterMp = e.target.value; render(); };
+    document.getElementById("dbCategory").onchange = function (e) { state.dbFilterCategory = e.target.value; render(); };
+    document.getElementById("dbSearch").onchange = function (e) { state.dbSearch = e.target.value; render(); };
+    Array.prototype.forEach.call(main.querySelectorAll("[data-code]"), function (el) {
+      el.addEventListener("click", function (e) { e.preventDefault(); openSheet(el.dataset.code); });
+    });
+  }
+
+  // ===================================================================
+  // SUMMARY
+  // ===================================================================
+  function renderSummaryPage(main) {
+    var s = computeSummary(state.summaryFilterMp);
+    main.innerHTML =
+      '<div class="page">' +
+        "<h1 style=\"font-size:19px;margin-bottom:4px\">제원 SUMMARY</h1>" +
+        '<p style="font-size:12.5px;color:var(--ink-muted);margin:0 0 16px">담당자(대공정)별로 제원 총량 집계, 미해결 이슈/질의 건수를 한 장으로 봅니다. ' +
+          "GCS(SPECIALITY GAS + 폐액)는 종수(자재명 개수)가 중요한 지표라 따로 집계합니다.</p>" +
+        '<div class="panel">' +
+          (state.summaryAutoApplied ? '<p style="font-size:12px;color:var(--ink-muted);margin:0 0 10px">' + esc((currentOwner() || {}).name || "") + " 님의 담당 대공정으로 자동 필터링됨 — 아래에서 직접 바꿀 수 있습니다.</p>" : "") +
+          '<div class="field" style="max-width:280px"><label class="field-label">대공정</label><select id="summaryMp"><option value="">전체</option>' +
+            MAJOR_PROCESSES.map(function (mp) { return '<option value="' + mp + '"' + (state.summaryFilterMp === mp ? " selected" : "") + ">" + mp + "</option>"; }).join("") +
+          "</select></div>" +
+        "</div>" +
+        '<div class="panel"><div class="stat-grid">' +
+          statTile("제원표", s.sheetCount + "건", "") +
+          statTile("미해결 검증 이슈", s.openIssueCount + "건", s.openIssueCount ? "error" : "ok") +
+          statTile("미해결 자동 질의", s.openAutoCount + "건", s.openAutoCount ? "warn" : "ok") +
+          statTile("미해결 수동 질의", s.openManualCount + "건", s.openManualCount ? "warn" : "ok") +
+          statTile("GCS 종수 (SPECIALITY GAS+폐액)", s.gcsMaterialCount + "종", "accent") +
+        "</div></div>" +
+        (s.gcsMaterials.length ? '<div class="panel"><h2>GCS 자재 목록</h2><p style="font-size:12.5px;color:var(--ink-muted);margin:6px 0 0">' + s.gcsMaterials.map(esc).join(", ") + "</p></div>" : "") +
+        '<div class="panel"><h2>대분류별 총량 집계</h2>' +
+          (s.categories.length ? '<div class="agg-grid" style="margin-top:10px">' + s.categories.map(renderAggCard).join("") + "</div>"
+            : '<div class="empty-state">집계할 데이터가 없습니다.</div>') +
+        "</div>" +
+      "</div>";
+    document.getElementById("summaryMp").onchange = function (e) { state.summaryFilterMp = e.target.value; state.summaryAutoApplied = false; render(); };
+  }
+  function statTile(label, value, tone) {
+    return '<div class="stat-tile"><div class="label">' + esc(label) + '</div><div class="value' + (tone ? " " + tone : "") + '">' + value + "</div></div>";
+  }
+  function renderAggCard(a) {
+    var isGcs = GCS_CATEGORIES.indexOf(a.category) !== -1;
+    var rows = Object.keys(a.totals).sort().map(function (g) {
+      return '<div class="row"><span class="g">' + esc(g) + '</span><span class="v">' + fmtNum(a.totals[g]) + "</span></div>";
+    }).join("");
+    return (
+      '<div class="agg-card' + (isGcs ? " gcs" : "") + '">' +
+        '<div class="cat">' + a.category + (isGcs ? '<span class="chip type-AUTO">GCS · ' + a.distinctCount + "종</span>" : '<span class="eyebrow">' + a.distinctCount + "종</span>") + "</div>" +
+        '<div class="unit">' + a.groupBy + " 별 · " + a.unit + "</div>" +
+        '<div class="rows">' + rows + "</div>" +
+        '<div class="total"><span>합계</span><span class="num">' + fmtNum(a.sum) + " " + a.unit + "</span></div>" +
+      "</div>"
+    );
+  }
+
+  // ===================================================================
+  // 질의응답 (Queries)
+  // ===================================================================
+  function renderQueriesPage(main) {
+    var owner = currentOwner();
+    var threads = state.threads.filter(function (t) {
+      if (state.selectedPjt && t.pjt !== state.selectedPjt) return false;
+      if (state.qFilterMp && t.majorProcess !== state.qFilterMp) return false;
+      if (state.qFilterDiscipline && t.discipline !== state.qFilterDiscipline) return false;
+      if (state.qFilterType && t.queryType !== state.qFilterType) return false;
+      if (state.qOpenOnly && OPEN_STATUSES.indexOf(t.status) === -1) return false;
+      return true;
+    }).sort(function (a, b) { return (b.updatedAt || "").localeCompare(a.updatedAt || ""); });
+
+    main.innerHTML =
+      '<div class="page">' +
+        "<h1 style=\"font-size:19px;margin-bottom:4px\">질의응답 관리</h1>" +
+        '<p style="font-size:12.5px;color:var(--ink-muted);margin:0 0 16px"><b>자동 제원 질의</b>는 로직이 명확한 규칙이 AS-IS→TO-BE를 스스로 계산해 일괄 생성하고, ' +
+          "기술팀 승인/미승인 한 번으로 끝납니다. <b>수동 제원 질의</b>는 설계사가 직접 서술형으로 질의하고, 기술팀 답변 → 설계사 승인 → " +
+          "기술팀 값 수정(검증 통과 필수) → 설계사 최종 승인 순서로 진행됩니다.</p>" +
+        '<div class="panel"><div class="btn-row">' +
+          '<button class="btn primary" id="genAutoBtn"' + (state.generating ? " disabled" : "") + ">" + (state.generating ? "생성 중..." : "자동 질의 일괄 생성") + "</button>" +
+          (state.genMessage ? '<span style="font-size:12.5px;color:var(--ink-muted);align-self:center">' + esc(state.genMessage) + "</span>" : "") +
+        "</div></div>" +
+        '<div class="panel">' +
+          (state.qAutoApplied ? '<p style="font-size:12px;color:var(--ink-muted);margin:0 0 10px">' + esc((owner || {}).name || "") + " 님 기준으로 자동 필터링됨 — 아래에서 직접 바꿀 수 있습니다.</p>" : "") +
+          '<div class="filter-bar">' +
+            '<div class="field"><label class="field-label">대공정</label><select id="qMp"><option value="">전체</option>' + MAJOR_PROCESSES.map(function (mp) { return '<option value="' + mp + '"' + (state.qFilterMp === mp ? " selected" : "") + ">" + mp + "</option>"; }).join("") + "</select></div>" +
+            '<div class="field"><label class="field-label">공종</label><select id="qDisc"><option value="">전체</option>' + DISCIPLINES.map(function (d) { return '<option value="' + d.code + '"' + (state.qFilterDiscipline === d.code ? " selected" : "") + ">" + d.name + "</option>"; }).join("") + "</select></div>" +
+            '<div class="field"><label class="field-label">질의 유형</label><select id="qType"><option value="">전체</option><option value="AUTO"' + (state.qFilterType === "AUTO" ? " selected" : "") + '>자동</option><option value="MANUAL"' + (state.qFilterType === "MANUAL" ? " selected" : "") + ">수동</option></select></div>" +
+            '<div class="field"><div class="checkbox-row"><input type="checkbox" id="qOpenOnly"' + (state.qOpenOnly ? " checked" : "") + '><label for="qOpenOnly" style="margin:0">미해결만 보기</label></div></div>' +
+          "</div>" +
+        "</div>" +
+        '<div class="queries-grid">' +
+          '<div class="panel"><h2>질의 목록 (' + threads.length + "건)</h2><div style=\"margin-top:10px\">" +
+            (threads.length ? threads.map(renderThreadCard).join("") : '<div class="empty-state">조건에 맞는 질의가 없습니다.</div>') +
+          "</div></div>" +
+          '<div class="panel">' + (state.selectedThreadId ? renderQueryDetail(state.selectedThreadId) : '<p style="color:var(--ink-faint);font-size:13px">왼쪽에서 질의를 선택하세요.</p>') + "</div>" +
+        "</div>" +
+      "</div>";
+
+    document.getElementById("genAutoBtn").onclick = function () {
+      state.generating = true; state.genMessage = ""; render();
+      generateAutoQueries().then(function (n) {
+        state.genMessage = n ? "자동 질의 " + n + "건이 새로 생성되었습니다." : "새로 생성할 자동 질의가 없습니다.";
+      }).catch(function (e) { state.genMessage = "생성 실패: " + (e && e.message ? e.message : e); })
+        .then(function () { state.generating = false; render(); });
+    };
+    document.getElementById("qMp").onchange = function (e) { state.qFilterMp = e.target.value; state.qAutoApplied = false; render(); };
+    document.getElementById("qDisc").onchange = function (e) { state.qFilterDiscipline = e.target.value; state.qAutoApplied = false; render(); };
+    document.getElementById("qType").onchange = function (e) { state.qFilterType = e.target.value; render(); };
+    document.getElementById("qOpenOnly").onchange = function (e) { state.qOpenOnly = e.target.checked; state.qAutoApplied = false; render(); };
+    Array.prototype.forEach.call(main.querySelectorAll("[data-thread]"), function (el) {
+      el.addEventListener("click", function () { state.selectedThreadId = el.dataset.thread; render(); });
+    });
+    wireQueryDetailEvents(main);
+  }
+  function renderThreadCard(t) {
+    var active = state.selectedThreadId === t.id;
+    return (
+      '<div class="thread-card' + (active ? " active" : "") + '" data-thread="' + t.id + '">' +
+        '<span class="chip ' + QA_STATUS_CHIP[t.status] + '">' + QA_STATUS_LABEL[t.status] + "</span> " +
+        '<span class="chip type-' + t.queryType + '">' + (t.queryType === "AUTO" ? "자동" : "수동") + "</span>" +
+        '<div class="t-title">' + esc(t.title) + "</div>" +
+        '<div class="t-meta">' + (t.pjt ? esc(t.pjt) + " · " : "") + esc(t.majorProcess) + (t.discipline ? " · " + disciplineName(t.discipline) : "") + " · 대상 " + (t.targets || []).length + "건" + (t.toBeValue != null ? " · TO-BE: " + esc(t.toBeValue) : "") + "</div>" +
+      "</div>"
+    );
+  }
+  function renderQueryDetail(id) {
+    var t = threadById(id);
+    if (!t) return '<p style="color:var(--ink-faint);font-size:13px">질의를 찾을 수 없습니다.</p>';
+    var owner = currentOwner();
+    var isTech = owner && owner.role === "TECH_LEAD" && (owner.majorProcesses || []).indexOf(t.majorProcess) !== -1;
+    var isDesigner = owner && owner.role === "DESIGNER" && t.discipline && (owner.disciplines || []).indexOf(t.discipline) !== -1;
+    var isAdmin = owner && owner.role === "ADMIN";
+    var targetRows = (t.targets || []).map(function (tg) {
+      var it = (state.sheets[tg.sheetCode] || {}).items || [];
+      return "<tr><td>" + esc(tg.sheetCode) + "</td><td>" + esc(tg.field) + "</td><td>" + esc((it[tg.itemIdx] || {})[tg.field]) + '</td><td class="tobe">' + esc(t.toBeValue == null ? "-" : t.toBeValue) + "</td></tr>";
+    }).join("");
+    var messages = (t.messages || []).map(function (m) {
+      return '<div class="msg-bubble ' + m.role + '"><div class="m-meta">' + esc(m.authorName) + " · " + m.role + " · " + fmtTime(m.at) + "</div>" + esc(m.content) + "</div>";
+    }).join("");
+
+    var actionHtml = "";
+    if (t.queryType === "AUTO" && t.status === "OPEN") {
+      actionHtml = (isTech || isAdmin)
+        ? '<div class="btn-row"><button class="btn primary" data-auto-approve="' + t.id + '">승인 (TO-BE 반영)</button><button class="btn" data-auto-reject="' + t.id + '">미승인</button></div>'
+        : '<p class="gate-note">이 대공정 담당 기술팀만 승인/미승인할 수 있습니다.</p>';
+    } else if (t.queryType === "MANUAL" && t.status === "OPEN") {
+      actionHtml = (isTech || isAdmin)
+        ? '<div class="thread-form"><label class="field-label">서술형 답변</label><textarea rows="3" id="answerText"></textarea><button class="btn primary" data-submit-answer="' + t.id + '">답변 등록</button></div>'
+        : '<p class="gate-note">이 대공정 담당 기술팀만 답변할 수 있습니다.</p>';
+    } else if (t.queryType === "MANUAL" && t.status === "TECH_ANSWERED") {
+      actionHtml = (isDesigner || isAdmin)
+        ? '<div class="btn-row"><button class="btn primary" data-answer-approve="' + t.id + '">답변 승인 (값 수정 허용)</button><button class="btn" data-answer-reject="' + t.id + '">반려 (재답변 요청)</button></div>'
+        : '<p class="gate-note">이 공종 담당 설계사만 답변을 승인/반려할 수 있습니다.</p>';
+    } else if (t.queryType === "MANUAL" && t.status === "ANSWER_APPROVED") {
+      actionHtml = (isTech || isAdmin)
+        ? '<div class="thread-form"><label class="field-label">새 값 제안 (성상명/자재명/유량 등 검증 규칙을 통과해야 등록됩니다)</label><input class="text" id="proposeValue"><button class="btn primary" data-propose="' + t.id + '">값 제안</button></div>'
+        : '<p class="gate-note">이 대공정 담당 기술팀만 값을 제안할 수 있습니다.</p>';
+    } else if (t.queryType === "MANUAL" && t.status === "VALUE_PROPOSED") {
+      actionHtml = (isDesigner || isAdmin)
+        ? '<div class="btn-row"><button class="btn primary" data-final-approve="' + t.id + '">최종 승인 (DB 반영)</button><button class="btn" data-final-reject="' + t.id + '">반려 (재제안 요청)</button></div>'
+        : '<p class="gate-note">이 공종 담당 설계사만 최종 승인/반려할 수 있습니다.</p>';
+    } else if (t.status === "RESOLVED" || t.status === "REJECTED") {
+      actionHtml = '<p style="color:var(--ink-faint);font-size:12.5px">이 질의는 종결되었습니다 (' + QA_STATUS_LABEL[t.status] + ").</p>";
+    }
+
+    return (
+      "<h2 style=\"margin-bottom:4px\">" + esc(t.title) + "</h2>" +
+      '<p style="font-size:12.5px;color:var(--ink-muted);margin:0 0 12px">' + (t.queryType === "AUTO" ? "자동 질의" : "수동 질의") + " · " + esc(t.majorProcess) +
+        (t.discipline ? " · " + disciplineName(t.discipline) : "") + ' · <span class="chip ' + QA_STATUS_CHIP[t.status] + '">' + QA_STATUS_LABEL[t.status] + "</span></p>" +
+      '<div style="overflow-x:auto"><table class="target-table"><thead><tr><th>건설코드</th><th>필드</th><th>AS-IS</th><th>TO-BE</th></tr></thead><tbody>' + targetRows + "</tbody></table></div>" +
+      (t.question ? '<div class="msg-bubble QUESTION"><div class="m-meta">' + esc(t.createdBy) + " · " + fmtTime(t.createdAt) + "</div>" + esc(t.question) + "</div>" : "") +
+      '<div id="threadMsgArea" style="max-height:200px;overflow-y:auto;margin:8px 0">' + messages + "</div>" +
+      '<div id="threadErrorArea"></div>' +
+      actionHtml
+    );
+  }
+  function reportThreadError(err) {
+    var area = document.getElementById("threadErrorArea");
+    if (!area) return;
+    if (!err) { area.innerHTML = ""; return; }
+    var html = '<p class="error-text">' + esc(err.error || "처리 실패") + "</p>";
+    if (err.errors && err.errors.length) html += "<ul>" + err.errors.map(function (m) { return '<li class="error-text">' + esc(m) + "</li>"; }).join("") + "</ul>";
+    area.innerHTML = html;
+  }
+  function wireQueryDetailEvents(main) {
+    function on(sel, fn) { var el = main.querySelector(sel); if (el) el.onclick = fn; }
+    Array.prototype.forEach.call(main.querySelectorAll("[data-auto-approve]"), function (b) { b.onclick = function () { b.disabled = true; decideAuto(b.dataset.autoApprove, true).then(render); }; });
+    Array.prototype.forEach.call(main.querySelectorAll("[data-auto-reject]"), function (b) { b.onclick = function () { b.disabled = true; decideAuto(b.dataset.autoReject, false).then(render); }; });
+    Array.prototype.forEach.call(main.querySelectorAll("[data-submit-answer]"), function (b) {
+      b.onclick = function () {
+        var text = (document.getElementById("answerText").value || "").trim();
+        if (!text) return;
+        b.disabled = true;
+        submitTechAnswer(b.dataset.submitAnswer, text).then(render);
+      };
+    });
+    Array.prototype.forEach.call(main.querySelectorAll("[data-answer-approve]"), function (b) { b.onclick = function () { b.disabled = true; decideAnswer(b.dataset.answerApprove, true).then(render); }; });
+    Array.prototype.forEach.call(main.querySelectorAll("[data-answer-reject]"), function (b) { b.onclick = function () { b.disabled = true; decideAnswer(b.dataset.answerReject, false).then(render); }; });
+    Array.prototype.forEach.call(main.querySelectorAll("[data-propose]"), function (b) {
+      b.onclick = function () {
+        var val = (document.getElementById("proposeValue").value || "").trim();
+        if (!val) return;
+        b.disabled = true;
+        proposeValue(b.dataset.propose, val).then(function (res) {
+          if (res && res.error) { reportThreadError(res); b.disabled = false; } else { render(); }
+        });
+      };
+    });
+    Array.prototype.forEach.call(main.querySelectorAll("[data-final-approve]"), function (b) { b.onclick = function () { b.disabled = true; decideFinal(b.dataset.finalApprove, true).then(render); }; });
+    Array.prototype.forEach.call(main.querySelectorAll("[data-final-reject]"), function (b) { b.onclick = function () { b.disabled = true; decideFinal(b.dataset.finalReject, false).then(render); }; });
+  }
+
+  // ===================================================================
+  // 업로드 (관리자 전용)
+  // ===================================================================
+  function renderUploadPage(main) {
+    var owner = currentOwner();
+    if (!owner || owner.role !== "ADMIN") {
+      main.innerHTML =
+        '<div class="page"><h1 style="font-size:19px">제원표 업로드</h1><div class="panel"><p>제원표 업로드는 <b>관리자</b>만 할 수 있습니다. 상단에서 관리자 계정을 선택해 주세요' +
+          (owner ? " (현재: " + esc(owner.name) + ", " + ROLE_LABEL[owner.role] + ")" : " (현재: 미선택)") + ".</p></div></div>";
+      return;
+    }
+    main.innerHTML =
+      '<div class="page">' +
+        "<h1 style=\"font-size:19px;margin-bottom:12px\">제원표 업로드</h1>" +
+        '<div class="panel">' +
+          '<p class="lead">실제 백엔드와 같은 파서 로직(2단 헤더 자동 인식 + 건설코드 자동 그룹핑 + 대공정 자동 판별)을 이 브라우저에서 그대로 돌립니다.</p>' +
+          '<div class="filter-bar">' +
+            '<div class="field"><label class="field-label">PJT</label><select id="upPjt">' + pjtOptions().map(function (p) { return '<option value="' + p + '"' + (p === (state.selectedPjt || DEFAULT_PJT) ? " selected" : "") + ">" + p + "</option>"; }).join("") + "</select></div>" +
+            '<div class="field"><label class="field-label">대공정 (기본값)</label><select id="upMp">' + MAJOR_PROCESSES.map(function (mp) { return '<option value="' + mp + '">' + mp + "</option>"; }).join("") + "</select></div>" +
+            '<div class="field"><label class="field-label">시트(탭) 이름 (선택)</label><input class="text" id="upSheetName" placeholder="비워두면 첫 시트"></div>' +
+            '<div class="field"><label class="field-label">건설코드 대체값 (선택)</label><input class="text" id="upCodeOverride"></div>' +
+            '<div class="field"><label class="field-label">엑셀 파일 (.xlsx)</label><input type="file" id="upFile" accept=".xlsx,.xlsm"></div>' +
+          "</div>" +
+          '<div class="btn-row" style="margin-top:10px"><button class="btn primary" id="upSubmit">' + (state.uploadBusy ? "분석 중..." : "업로드 및 분석") + "</button></div>" +
+          '<div id="upResult" style="margin-top:14px">' + renderUploadResult() + "</div>" +
+        "</div>" +
+      "</div>";
+    document.getElementById("upSubmit").onclick = handleUploadSubmit;
+  }
+  function renderUploadResult() {
+    if (!state.uploadResult) return "";
+    if (state.uploadResult.error) return '<div class="upload-result-error">' + esc(state.uploadResult.error) + "</div>";
+    var r = state.uploadResult;
+    var html = '<div class="upload-result-ok">건설코드 ' + r.count + "건이 새 제원표로 추가됐습니다: " + r.codes.map(esc).join(", ") + "</div>";
+    if (r.warnings.length) html += "<ul style=\"margin:0;padding-left:18px\">" + r.warnings.map(function (w) { return '<li class="upload-result-warn">' + esc(w) + "</li>"; }).join("") + "</ul>";
+    return html;
+  }
+  function handleUploadSubmit() {
+    var fileInput = document.getElementById("upFile");
+    var file = fileInput && fileInput.files[0];
+    if (!file) { state.uploadResult = { error: "엑셀 파일을 선택해 주세요." }; render(); return; }
+    var defaultDept = document.getElementById("upMp").value;
+    var pjtVal = document.getElementById("upPjt").value;
+    var sheetLabel = (document.getElementById("upSheetName").value || "").trim();
+    var codeOverride = (document.getElementById("upCodeOverride").value || "").trim().toUpperCase() || null;
+    state.uploadBusy = true; state.uploadResult = null; render();
+    file.arrayBuffer().then(function (buf) {
+      var wb = XLSX.read(buf, { type: "array" });
+      var sheetName = (sheetLabel && wb.SheetNames.indexOf(sheetLabel) !== -1) ? sheetLabel : wb.SheetNames[0];
+      var rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header: 1, defval: null, raw: true });
+      var parsed = parseGroupedWorkbook(rows, { constructionCodeOverride: codeOverride });
+      var groups = parsed.groups.map(function (g) { return Object.assign({}, g, { dept: resolveMajorProcess(g.majorProcessRaw, defaultDept, parsed.warnings, g.code) }); });
+      if (groups.length > 200) { parsed.warnings.push("그룹이 너무 많아(" + groups.length + "건) 처음 200건만 반영했습니다."); groups = groups.slice(0, 200); }
+      var owner = currentOwner();
+      return Promise.all(groups.map(function (g) {
+        return saveSheetVersion(g.code, {
+          code: g.code, dept: g.dept, title: g.dept + " " + g.code, location: g.location, pjt: pjtVal, items: g.items,
+          uploadedBy: owner ? owner.name : "관리자", uploadedAt: nowIso(),
+        }, "UPLOAD");
+      })).then(function () {
+        state.uploadResult = { count: groups.length, warnings: parsed.warnings, codes: groups.map(function (g) { return g.code; }) };
+      });
+    }).catch(function (err) {
+      state.uploadResult = { error: err && err.message ? err.message : String(err) };
+    }).then(function () { state.uploadBusy = false; render(); });
+  }
+
+  // ===================================================================
+  // 사용자 관리
+  // ===================================================================
+  function renderOwnersPage(main) {
+    var owners = state.owners.slice().sort(function (a, b) { return a.name.localeCompare(b.name, "ko"); });
+    var rows = owners.map(function (o) {
+      var scope = o.role === "TECH_LEAD" ? (o.majorProcesses || []).map(function (m) { return '<span class="chip dept">' + esc(m) + "</span>"; }).join(" ")
+        : o.role === "DESIGNER" ? (o.disciplines || []).map(function (d) { return '<span class="chip dept">' + esc(disciplineName(d)) + "</span>"; }).join(" ") : "-";
+      return "<tr><td>" + esc(o.name) + '</td><td><span class="chip role-' + o.role + '">' + ROLE_LABEL[o.role] + "</span></td><td>" + scope + "</td></tr>";
+    }).join("");
+    main.innerHTML =
+      '<div class="page">' +
+        "<h1 style=\"font-size:19px;margin-bottom:4px\">사용자 관리</h1>" +
+        '<p style="font-size:12.5px;color:var(--ink-muted);margin:0 0 16px"><b>관리자</b>는 모든 데이터를 열람하고 제원표를 업로드할 수 있는 유일한 역할입니다. ' +
+          "<b>기술팀 담당자</b>는 대공정별로 질의에 답변/승인합니다. <b>설계사</b>는 공종별로 질의를 제기하고 답변/최종값을 승인합니다.</p>" +
+        '<div class="owners-grid">' +
+          '<div class="panel"><h2>사용자 목록</h2><div style="overflow-x:auto;margin-top:10px"><table class="owner-table"><thead><tr><th>이름</th><th>역할</th><th>담당 대공정/공종</th></tr></thead><tbody>' + rows + "</tbody></table></div></div>" +
+          '<div class="panel"><h2>사용자 추가</h2><div class="thread-form" style="margin-top:10px">' +
+            '<div class="field"><label class="field-label">이름</label><input class="text" id="ownerName"></div>' +
+            '<div class="field"><label class="field-label">역할</label><select id="ownerRole">' + ROLES.map(function (r) { return '<option value="' + r + '">' + ROLE_LABEL[r] + "</option>"; }).join("") + "</select></div>" +
+            '<div id="ownerScopeArea"></div>' +
+            '<button class="btn primary" id="ownerAddBtn" style="align-self:flex-start">추가</button>' +
+            '<div id="ownerAddError"></div>' +
+          "</div></div>" +
+        "</div>" +
+      "</div>";
+    var roleSel = document.getElementById("ownerRole");
+    function renderScopeArea() {
+      var role = roleSel.value;
+      var area = document.getElementById("ownerScopeArea");
+      if (role === "TECH_LEAD") {
+        area.innerHTML = '<div class="field"><label class="field-label">담당 대공정</label><div class="checkbox-grid">' +
+          MAJOR_PROCESSES.map(function (mp) { return '<label><input type="checkbox" class="mpBox" value="' + mp + '">' + mp + "</label>"; }).join("") + "</div></div>";
+      } else if (role === "DESIGNER") {
+        area.innerHTML = '<div class="field"><label class="field-label">담당 공종</label><div class="checkbox-grid">' +
+          DISCIPLINES.map(function (d) { return '<label><input type="checkbox" class="discBox" value="' + d.code + '">' + d.name + "</label>"; }).join("") + "</div></div>";
+      } else {
+        area.innerHTML = '<p class="auto-note">관리자는 모든 대공정/공종에 접근합니다.</p>';
+      }
+    }
+    roleSel.onchange = renderScopeArea;
+    renderScopeArea();
+    document.getElementById("ownerAddBtn").onclick = function () {
+      var name = (document.getElementById("ownerName").value || "").trim();
+      var errEl = document.getElementById("ownerAddError");
+      errEl.innerHTML = "";
+      if (!name) { errEl.innerHTML = '<p class="error-text">이름을 입력해 주세요.</p>'; return; }
+      var role = roleSel.value;
+      var mps = role === "TECH_LEAD" ? Array.prototype.map.call(main.querySelectorAll(".mpBox:checked"), function (b) { return b.value; }) : [];
+      var discs = role === "DESIGNER" ? Array.prototype.map.call(main.querySelectorAll(".discBox:checked"), function (b) { return b.value; }) : [];
+      store.addOwner({ name: name, role: role, majorProcesses: mps, disciplines: discs, createdAt: nowIso() }).then(render);
+    };
+  }
+
+  // ===================================================================
+  // 제원표 상세
+  // ===================================================================
+  var SHEET_TABS = [
+    { id: "items", label: "제원 항목" },
+    { id: "issues", label: "검증 결과" },
+    { id: "agg", label: "총량 집계" },
+    { id: "qa", label: "관련 질의" },
+    { id: "corrections", label: "수정 이력" },
+    { id: "versions", label: "버전 이력" },
+  ];
+  function renderSheetPage(main) {
+    var codes = sheetList().map(function (s) { return s.code; }).sort();
+    if (state.selectedSheet && codes.indexOf(state.selectedSheet) === -1 && state.sheets[state.selectedSheet]) {
+      codes = codes.concat([state.selectedSheet]).sort();
+    }
+    var code = state.selectedSheet || codes[0];
+    if (!code) { main.innerHTML = '<div class="page"><div class="empty-state">등록된 제원표가 없습니다.</div></div>'; return; }
+    state.selectedSheet = code;
+    var sheet = state.sheets[code];
+    var items = sheet.items || [];
+    var issues = computeIssues(items);
+    var errorCount = issues.filter(function (i) { return i.severity === "ERROR"; }).length;
+    var agg = computeAggregation(items);
+    var relatedThreads = state.threads.filter(function (t) { return (t.targets || []).some(function (tg) { return tg.sheetCode === code; }); });
+    var corrections = state.corrections.filter(function (c) { return c.sheetCode === code; }).sort(function (a, b) { return (b.appliedAt || "").localeCompare(a.appliedAt || ""); });
+
+    var railHtml = codes.map(function (c) {
+      var s = state.sheets[c];
+      var iss = computeIssues(s.items || []);
+      var chip = iss.length === 0 ? '<span class="chip ok">정상</span>' : '<span class="chip ' + (iss.filter(function (i) { return i.severity === "ERROR"; }).length ? "error" : "warn") + '">이슈 ' + iss.length + "건</span>";
+      return (
+        '<button class="sheet-card' + (c === code ? " active" : "") + '" data-goto-sheet="' + c + '">' +
+          '<div class="row2"><span class="code">' + c + "</span>" + chip + "</div>" +
+          '<div style="font-size:12px;color:var(--ink-muted)">' + esc(s.title || "") + "</div>" +
+          '<div class="row2"><span class="chip dept">' + esc(s.dept) + "</span><span class=\"chip neutral\">v" + (s.ver || 1) + "</span></div>" +
+        "</button>"
+      );
+    }).join("");
+
+    main.innerHTML =
+      '<div class="shell">' +
+        '<div class="panel" style="padding:0"><div class="rail-head"><div class="rail-head-row"><h2>제원표</h2></div></div><div class="rail-list">' + railHtml + "</div></div>" +
+        '<div class="panel" style="padding:0">' +
+          '<div class="workspace-head"><div><h1>' + esc(sheet.title || code) + "</h1><div class=\"meta\"><span class=\"num\">" + code + '</span><span class="chip neutral">v' + (sheet.ver || 1) + '</span>' + (sheet.pjt ? '<span class="sep">·</span><span class="chip type-AUTO">' + esc(sheet.pjt) + "</span>" : "") + '<span class="sep">·</span><span>' + esc(sheet.location || "") + '</span><span class="sep">·</span><span class="chip dept">' + esc(sheet.dept) + "</span>" +
+            (errorCount ? '<span class="chip error">OVER ' + errorCount + "건</span>" : '<span class="chip ok">기준 이내</span>') + "</div></div></div>" +
+          '<div class="tabs">' + SHEET_TABS.map(function (t) {
+            var badge = t.id === "issues" && issues.length ? '<span class="count">' + issues.length + "</span>"
+              : t.id === "qa" && relatedThreads.length ? '<span class="count">' + relatedThreads.length + "</span>"
+              : t.id === "versions" && (sheet.versionHistory || []).length ? '<span class="count">' + (sheet.versionHistory || []).length + "</span>" : "";
+            return '<button class="tab' + (state.activeTab === t.id ? " active" : "") + (t.id === "issues" && errorCount ? " has-error" : "") + '" data-tab="' + t.id + '">' + t.label + badge + "</button>";
+          }).join("") + "</div>" +
+          '<div class="tab-panel" id="sheetTabPanel">' +
+            (state.activeTab === "items" ? renderItemsTab(items, issues)
+              : state.activeTab === "issues" ? renderIssuesTab(issues, items, code)
+              : state.activeTab === "agg" ? renderAggTab(agg)
+              : state.activeTab === "qa" ? renderRelatedQaTab(relatedThreads)
+              : state.activeTab === "versions" ? renderVersionsTab(sheet)
+              : renderCorrectionsTab(corrections)) +
+          "</div>" +
+        "</div>" +
+      "</div>";
+
+    Array.prototype.forEach.call(main.querySelectorAll("[data-goto-sheet]"), function (b) { b.onclick = function () { state.selectedSheet = b.dataset.gotoSheet; state.activeTab = "items"; state.composerFor = null; render(); }; });
+    Array.prototype.forEach.call(main.querySelectorAll(".tab"), function (b) { b.onclick = function () { state.activeTab = b.dataset.tab; state.composerFor = null; render(); }; });
+    wireSheetTabEvents(main, code, issues, items);
+    wireVersionsTabEvents(main);
+  }
+  function renderItemsTab(items, issues) {
+    var flagByItem = {};
+    issues.forEach(function (i) { var cur = flagByItem[i.itemIdx]; if (!cur || i.severity === "ERROR") flagByItem[i.itemIdx] = i.severity; });
+    var byCat = {};
+    items.forEach(function (it, idx) { (byCat[it.category] = byCat[it.category] || []).push({ it: it, idx: idx }); });
+    return CAT_ORDER.filter(function (c) { return byCat[c]; }).map(function (category) {
+      var rows = byCat[category].map(function (pair) {
+        var it = pair.it, idx = pair.idx;
+        var keyField = it.성상명 || it.전원종류 || it.자재명 || "-";
+        var specBits = [];
+        ["유량", "배관수량", "압력", "배관재질", "전력값", "부하전류", "전압", "차단기전류", "실사용량", "풍량", "포트 수량", "설비모듈"].forEach(function (f) {
+          if (it[f] != null) specBits.push("<span>" + f + " <b>" + (typeof it[f] === "number" ? fmtNum(it[f]) : esc(it[f])) + "</b></span>");
+        });
+        var flag = flagByItem[idx];
+        return '<div class="item-row' + (flag ? " flagged-" + flag : "") + '"><span class="key">' + esc(keyField) + '</span><div class="specs">' + specBits.join("") + "</div></div>";
+      }).join("");
+      return '<div class="item-group"><div class="cat-label"><span class="swatch"></span>' + category + " · " + byCat[category].length + "건</div>" + rows + "</div>";
+    }).join("") || '<div class="empty-state">항목이 없습니다.</div>';
+  }
+  function renderIssuesTab(issues, items, sheetCode) {
+    if (issues.length === 0) return '<div class="empty-state"><div class="big">✓</div>검증 규칙(성상별 유량 OVER, 성상명 표준화)을 통과했습니다.</div>';
+    return issues.map(function (issue) {
+      var it = items[issue.itemIdx];
+      var existingAuto = issue.suggestedValue && state.threads.some(function (t) { return t.queryType === "AUTO" && (t.targets || []).some(function (tg) { return tg.sheetCode === sheetCode && tg.itemIdx === issue.itemIdx && tg.field === issue.field; }) && t.status !== "REJECTED"; });
+      var existingManual = state.threads.filter(function (t) { return t.queryType === "MANUAL" && (t.targets || []).some(function (tg) { return tg.sheetCode === sheetCode && tg.itemIdx === issue.itemIdx && tg.field === issue.field; }); })[0];
+      var actionHtml;
+      if (issue.suggestedValue) {
+        actionHtml = existingAuto
+          ? '<span class="chip type-AUTO">자동 질의 등록됨</span>'
+          : '<span class="chip type-AUTO">자동 질의 대상</span>';
+      } else if (existingManual) {
+        actionHtml = '<button class="btn small" data-goto-manual="' + existingManual.id + '">' + QA_STATUS_LABEL[existingManual.status] + " · 보기</button>";
+      } else {
+        actionHtml = '<button class="btn small primary" data-ask="' + issue.id + '">질문하기</button>';
+      }
+      return (
+        '<div class="issue-card ' + issue.severity + '">' +
+          '<div class="body"><div class="msg">' + esc(issue.message) + "</div>" +
+          '<div class="sub">' + it.category + " · " + issue.field + " 필드 · 행 #" + (issue.itemIdx + 1) + "</div>" +
+          (issue.suggestedValue ? '<div class="suggest">제안값: ' + esc(issue.suggestedValue) + ' → "질의응답" 메뉴의 "자동 질의 일괄 생성"으로 처리하세요.</div>' : "") +
+          (state.composerFor === issue.id ? renderComposer(issue) : "") + "</div>" +
+          '<div class="actions">' + actionHtml + "</div>" +
+        "</div>"
+      );
+    }).join("");
+  }
+  function renderComposer(issue) {
+    return (
+      '<div class="thread-form" style="margin-top:10px">' +
+        '<textarea rows="2" id="composerText" data-issue="' + issue.id + '">' + esc("이 값이 맞는지 확인 부탁드립니다. (" + issue.message + ")") + "</textarea>" +
+        '<div class="row"><select id="composerDiscipline">' + DISCIPLINES.map(function (d) { return '<option value="' + d.code + '">' + d.name + "</option>"; }).join("") + "</select></div>" +
+        '<div class="row"><button class="btn primary small" data-submit-question="' + issue.id + '">질문 등록</button><button class="btn small" data-cancel-question="1">취소</button></div>' +
+      "</div>"
+    );
+  }
+  function renderAggTab(agg) {
+    if (agg.length === 0) return '<div class="empty-state">집계할 데이터가 없습니다.</div>';
+    return '<div class="agg-grid">' + agg.map(renderAggCard).join("") + "</div>";
+  }
+  function renderRelatedQaTab(threads) {
+    if (!threads.length) return '<div class="empty-state"><div class="big">💬</div>이 제원표와 관련된 질의가 없습니다. "검증 결과" 탭의 이슈에서 질문을 등록하거나, "질의응답" 메뉴에서 자동 질의를 생성해 보세요.</div>';
+    return threads.map(function (t) {
+      return (
+        '<div class="thread-card" data-goto-manual="' + t.id + '" style="cursor:pointer">' +
+          '<span class="chip ' + QA_STATUS_CHIP[t.status] + '">' + QA_STATUS_LABEL[t.status] + '</span> <span class="chip type-' + t.queryType + '">' + (t.queryType === "AUTO" ? "자동" : "수동") + "</span>" +
+          '<div class="t-title">' + esc(t.title) + "</div>" +
+          '<div class="t-meta">담당: ' + esc(t.assignedOwnerName || "미배정") + "</div>" +
+        "</div>"
+      );
+    }).join("") + '<p class="auto-note" style="margin-top:8px">답변/승인 등 실제 처리는 상단 "질의응답" 메뉴에서 진행합니다.</p>';
+  }
+  function renderCorrectionsTab(corrections) {
+    if (!corrections.length) return '<div class="empty-state"><div class="big">🗂</div>아직 반영된 수정 이력이 없습니다.</div>';
+    var rows = corrections.map(function (c) {
+      return "<tr><td>" + esc(c.field) + '</td><td><span class="old">' + esc(c.oldValue) + '</span><span class="arrow">→</span><span class="new">' + esc(c.newValue) + "</span></td><td><span class=\"chip type-" + c.source + '">' + (c.source === "AUTO" ? "자동" : "수동") + "</span></td><td>" + esc(c.appliedBy) + "</td><td>" + fmtTime(c.appliedAt) + "</td></tr>";
+    }).join("");
+    return '<div style="overflow-x:auto"><table class="corr-table"><thead><tr><th>필드</th><th>변경</th><th>출처</th><th>처리자</th><th>일시</th></tr></thead><tbody>' + rows + "</tbody></table></div>";
+  }
+  function versionSourceLabel(src) {
+    return src === "SEED" ? "시드 데이터" : src === "UPLOAD" ? "엑셀 재업로드" : src === "AUTO" ? "자동 질의 반영" : src === "MANUAL" ? "수동 질의 반영" : (src || "-");
+  }
+  function renderVersionsTab(sheet) {
+    var history = sheet.versionHistory || [];
+    var current =
+      '<div class="thread-card" style="cursor:default"><span class="chip ok">v' + (sheet.ver || 1) + " · 현재</span> <span class=\"chip type-" +
+        (sheet.versionSource === "UPLOAD" ? "MANUAL" : "AUTO") + '">' + esc(versionSourceLabel(sheet.versionSource)) + "</span>" +
+        '<div class="t-meta" style="margin-top:6px">' + (sheet.items || []).length + "건 · " + fmtTime(sheet.updatedAt) + "</div></div>";
+    if (!history.length) {
+      return current + '<p class="auto-note" style="margin-top:10px">이전 버전이 없습니다. 이 제원표가 재업로드되거나 질의 승인으로 값이 바뀌면 이전 상태가 여기 버전 이력으로 남습니다.</p>';
+    }
+    var rows = history.map(function (v) {
+      var expanded = state.expandedVersion === v.ver;
+      return (
+        '<div class="thread-card" style="cursor:default">' +
+          '<div class="row2"><span class="chip neutral">v' + v.ver + '</span> <button class="btn small" data-toggle-version="' + v.ver + '">' + (expanded ? "접기" : "항목 보기") + "</button></div>" +
+          '<div class="t-meta" style="margin-top:6px">' + esc(versionSourceLabel(v.versionSource)) + " · " + (v.items || []).length + "건 · " + fmtTime(v.archivedAt) + "</div>" +
+          (expanded ? '<div style="margin-top:10px">' + renderItemsTab(v.items || [], []) + "</div>" : "") +
+        "</div>"
+      );
+    }).join("");
+    return current + '<div style="margin-top:10px">' + rows + "</div>";
+  }
+  function wireSheetTabEvents(main, code, issues, items) {
+    Array.prototype.forEach.call(main.querySelectorAll("[data-ask]"), function (b) { b.onclick = function () { state.composerFor = b.dataset.ask; render(); }; });
+    Array.prototype.forEach.call(main.querySelectorAll("[data-cancel-question]"), function (b) { b.onclick = function () { state.composerFor = null; render(); }; });
+    Array.prototype.forEach.call(main.querySelectorAll("[data-goto-manual]"), function (b) { b.onclick = function () { state.page = "queries"; state.selectedThreadId = b.dataset.gotoManual; render(); }; });
+    Array.prototype.forEach.call(main.querySelectorAll("[data-submit-question]"), function (b) {
+      b.onclick = function () {
+        var issueId = b.dataset.submitQuestion;
+        var issue = issues.filter(function (i) { return i.id === issueId; })[0];
+        var content = (document.getElementById("composerText").value || "").trim();
+        var discipline = document.getElementById("composerDiscipline").value;
+        if (!content) return;
+        var owner = currentOwner();
+        var sheet = state.sheets[code];
+        b.disabled = true;
+        store.addThread({
+          queryType: "MANUAL", pjt: sheet.pjt, majorProcess: sheet.dept, discipline: discipline, fieldLabel: issue.field,
+          asIsValue: String(items[issue.itemIdx][issue.field]), toBeValue: null,
+          targets: [{ sheetCode: code, itemIdx: issue.itemIdx, field: issue.field }], status: "OPEN",
+          title: "[문의] " + issue.field + " (" + code + ")", question: content,
+          createdBy: owner ? owner.name : "익명", createdAt: nowIso(), updatedAt: nowIso(),
+          assignedOwnerName: pickTechLeadFor(sheet.dept), messages: [],
+        }).then(function () { state.composerFor = null; render(); });
+      };
+    });
+  }
+  function wireVersionsTabEvents(main) {
+    Array.prototype.forEach.call(main.querySelectorAll("[data-toggle-version]"), function (b) {
+      b.onclick = function () {
+        var v = +b.dataset.toggleVersion;
+        state.expandedVersion = state.expandedVersion === v ? null : v;
+        render();
+      };
+    });
+  }
+
+  // ===================================================================
+  // 부팅 / 실시간 구독
+  // ===================================================================
+  var unsubs = [];
+  function subscribeAll() {
+    unsubs.forEach(function (u) { u(); });
+    unsubs = [
+      store.watchOwners(function (docs) { state.owners = docs; render(); }),
+      store.watchSheets(function (map) { state.sheets = map; render(); }),
+      store.watchThreads(function (docs) { state.threads = docs; render(); }),
+      store.watchCorrections(function (docs) { state.corrections = docs; render(); }),
+    ];
+  }
+  function setLive(on, label) {
+    var pill = document.getElementById("livePill");
+    pill.classList.toggle("on", on);
+    document.getElementById("liveLabel").textContent = label;
+  }
+  function boot(dbNs) {
+    db = dbNs;
+    store = makeDbStore(dbNs);
+    setLive(true, "실시간 공유 연결됨");
+    seedIfEmpty();
+    subscribeAll();
+    render();
+  }
+
+  function render() {
+    renderPjtSelect();
+    renderUserSelect();
+    renderPageNav();
+    var main = document.getElementById("mainArea");
+    if (state.page === "dashboard") renderDashboard(main);
+    else if (state.page === "db") renderDbPage(main);
+    else if (state.page === "summary") renderSummaryPage(main);
+    else if (state.page === "queries") renderQueriesPage(main);
+    else if (state.page === "upload") renderUploadPage(main);
+    else if (state.page === "owners") renderOwnersPage(main);
+    else if (state.page === "sheet") renderSheetPage(main);
+  }
+
+  store = makeLocalStore();
+  seedIfEmpty();
+  subscribeAll();
+  render();
+
+  if (window.claude && typeof window.claude.use === "function") {
+    window.claude.use("db").then(function (dbNs) { if (dbNs) boot(dbNs); }).catch(function () {});
+  }
+  setTimeout(function () { if (!store.isLive) { setLive(false, "로컬 모드 (이 브라우저만)"); document.getElementById("banner").innerHTML = '<div class="banner">실시간 공유 저장소에 연결하지 못해 로컬 모드로 동작합니다. 이 브라우저 세션에서만 데이터가 유지됩니다.</div>'; } }, 3000);
+})();
+</script>
+
+</body></html>
