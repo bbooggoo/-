@@ -560,7 +560,7 @@
     corrections: [],
     dashFilterMp: "", dashFilterStatus: "",
     summaryFilterMp: "", summaryAutoApplied: false,
-    qFilterMp: "", qFilterDiscipline: "", qFilterType: "", qOpenOnly: false, qAutoApplied: false,
+    qFilterMp: "", qFilterDiscipline: "", qFilterType: "", qOpenOnly: false, qRequeryOnly: false, qAutoApplied: false,
     selectedThreadId: null,
     selectedSheet: null,
     activeTab: "items",
@@ -714,6 +714,8 @@
       gcsMaterials: Object.keys(materials).sort(), gcsMaterialCount: Object.keys(materials).length,
       openAutoCount: relevantThreads.filter(function (t) { return t.queryType === "AUTO" && OPEN_STATUSES.indexOf(t.status) !== -1; }).length,
       openManualCount: relevantThreads.filter(function (t) { return t.queryType === "MANUAL" && OPEN_STATUSES.indexOf(t.status) !== -1; }).length,
+      requeryThreadCount: relevantThreads.filter(function (t) { return (t.requeryCount || 0) > 0; }).length,
+      requeryTotalCount: relevantThreads.reduce(function (a, t) { return a + (t.requeryCount || 0); }, 0),
     };
   }
 
@@ -846,10 +848,12 @@
   function decideAnswer(threadId, approve) {
     var t = threadById(threadId);
     if (!t) return Promise.resolve();
-    return store.updateThread(threadId, {
+    var patch = {
       status: approve ? "ANSWER_APPROVED" : "OPEN", updatedAt: nowIso(),
       messages: pushMessage(t, "COMMENT", approve ? "특이사항 없음으로 확인 — 기술팀이 제원 변경을 진행합니다." : "재질의가 필요합니다 — 다시 답변해 주세요."),
-    });
+    };
+    if (!approve) patch.requeryCount = (t.requeryCount || 0) + 1;
+    return store.updateThread(threadId, patch);
   }
   function proposeValue(threadId, newValue) {
     var t = threadById(threadId);
@@ -879,10 +883,12 @@
   function decideFinal(threadId, approve) {
     var t = threadById(threadId);
     if (!t) return Promise.resolve();
-    var chain = store.updateThread(threadId, {
+    var patch = {
       status: approve ? "RESOLVED" : "ANSWER_APPROVED", updatedAt: nowIso(),
       messages: pushMessage(t, "COMMENT", approve ? "최종 승인. DB에 반영되었습니다." : "반려되었습니다 — 재질의가 필요합니다. 값을 다시 제안해 주세요."),
-    });
+    };
+    if (!approve) patch.requeryCount = (t.requeryCount || 0) + 1;
+    var chain = store.updateThread(threadId, patch);
     if (approve) {
       chain = chain.then(function () {
         if (t.proposedChanges && t.proposedChanges.length) {
@@ -1330,6 +1336,8 @@
           statTile("미해결 검증 이슈", s.openIssueCount + "건", s.openIssueCount ? "error" : "ok") +
           statTile("미해결 자동 질의", s.openAutoCount + "건", s.openAutoCount ? "warn" : "ok") +
           statTile("미해결 수동 질의", s.openManualCount + "건", s.openManualCount ? "warn" : "ok") +
+          statTile("재질의 발생 질의", s.requeryThreadCount + "건", s.requeryThreadCount ? "warn" : "ok") +
+          statTile("재질의 누적 횟수", s.requeryTotalCount + "회", s.requeryTotalCount ? "warn" : "ok") +
           statTile("GCS 종수 (SPECIALITY GAS+폐액)", s.gcsMaterialCount + "종", "accent") +
         "</div></div>" +
         (s.gcsMaterials.length ? '<div class="panel"><h2>GCS 자재 목록</h2><p style="font-size:12.5px;color:var(--ink-muted);margin:6px 0 0">' + s.gcsMaterials.map(esc).join(", ") + "</p></div>" : "") +
@@ -1369,6 +1377,7 @@
       if (state.qFilterDiscipline && t.discipline !== state.qFilterDiscipline) return false;
       if (state.qFilterType && t.queryType !== state.qFilterType) return false;
       if (state.qOpenOnly && OPEN_STATUSES.indexOf(t.status) === -1) return false;
+      if (state.qRequeryOnly && !(t.requeryCount > 0)) return false;
       return true;
     }).sort(function (a, b) { return (b.updatedAt || "").localeCompare(a.updatedAt || ""); });
 
@@ -1390,6 +1399,7 @@
             '<div class="field"><label class="field-label">공종</label><select id="qDisc"><option value="">전체</option>' + DISCIPLINES.map(function (d) { return '<option value="' + d.code + '"' + (state.qFilterDiscipline === d.code ? " selected" : "") + ">" + d.name + "</option>"; }).join("") + "</select></div>" +
             '<div class="field"><label class="field-label">질의 유형</label><select id="qType"><option value="">전체</option><option value="AUTO"' + (state.qFilterType === "AUTO" ? " selected" : "") + '>자동</option><option value="MANUAL"' + (state.qFilterType === "MANUAL" ? " selected" : "") + ">수동</option></select></div>" +
             '<div class="field"><div class="checkbox-row"><input type="checkbox" id="qOpenOnly"' + (state.qOpenOnly ? " checked" : "") + '><label for="qOpenOnly" style="margin:0">미해결만 보기</label></div></div>' +
+            '<div class="field"><div class="checkbox-row"><input type="checkbox" id="qRequeryOnly"' + (state.qRequeryOnly ? " checked" : "") + '><label for="qRequeryOnly" style="margin:0">재질의 있는 것만 보기</label></div></div>' +
           "</div>" +
         "</div>" +
         '<div class="queries-grid">' +
@@ -1411,6 +1421,7 @@
     document.getElementById("qDisc").onchange = function (e) { state.qFilterDiscipline = e.target.value; state.qAutoApplied = false; render(); };
     document.getElementById("qType").onchange = function (e) { state.qFilterType = e.target.value; render(); };
     document.getElementById("qOpenOnly").onchange = function (e) { state.qOpenOnly = e.target.checked; state.qAutoApplied = false; render(); };
+    document.getElementById("qRequeryOnly").onchange = function (e) { state.qRequeryOnly = e.target.checked; render(); };
     Array.prototype.forEach.call(main.querySelectorAll("[data-thread]"), function (el) {
       el.addEventListener("click", function () { state.selectedThreadId = el.dataset.thread; render(); });
     });
@@ -1422,6 +1433,7 @@
       '<div class="thread-card' + (active ? " active" : "") + '" data-thread="' + t.id + '">' +
         '<span class="chip ' + QA_STATUS_CHIP[t.status] + '">' + QA_STATUS_LABEL[t.status] + "</span> " +
         '<span class="chip type-' + t.queryType + '">' + (t.queryType === "AUTO" ? "자동" : "수동") + "</span>" +
+        (t.requeryCount > 0 ? ' <span class="chip warn">재질의 ' + t.requeryCount + "회</span>" : "") +
         '<div class="t-title">' + esc(t.title) + "</div>" +
         '<div class="t-meta">' + (t.pjt ? esc(t.pjt) + " · " : "") + esc(t.majorProcess) + (t.discipline ? " · " + disciplineName(t.discipline) : "") + " · 대상 " + (t.targets || []).length + "건" + (t.toBeValue != null ? " · TO-BE: " + esc(t.toBeValue) : "") + "</div>" +
       "</div>"
@@ -1525,7 +1537,8 @@
     return (
       "<h2 style=\"margin-bottom:4px\">" + esc(t.title) + "</h2>" +
       '<p style="font-size:12.5px;color:var(--ink-muted);margin:0 0 12px">' + (t.queryType === "AUTO" ? "자동 질의" : "수동 질의") + " · " + esc(t.majorProcess) +
-        (t.discipline ? " · " + disciplineName(t.discipline) : "") + ' · <span class="chip ' + QA_STATUS_CHIP[t.status] + '">' + QA_STATUS_LABEL[t.status] + "</span></p>" +
+        (t.discipline ? " · " + disciplineName(t.discipline) : "") + ' · <span class="chip ' + QA_STATUS_CHIP[t.status] + '">' + QA_STATUS_LABEL[t.status] + "</span>" +
+        (t.requeryCount > 0 ? ' <span class="chip warn">재질의 ' + t.requeryCount + "회</span>" : "") + "</p>" +
       '<div style="overflow-x:auto"><table class="target-table"><thead><tr><th>건설코드</th><th>필드</th><th>AS-IS</th><th>TO-BE</th></tr></thead><tbody>' + targetRows + "</tbody></table></div>" +
       (t.question ? '<div class="msg-bubble QUESTION"><div class="m-meta">' + esc(t.createdBy) + " · " + fmtTime(t.createdAt) + "</div>" + esc(t.question) + "</div>" : "") +
       '<div id="threadMsgArea" style="max-height:200px;overflow-y:auto;margin:8px 0">' + messages + "</div>" +
@@ -1926,7 +1939,12 @@
   }
 
   // ===================================================================
-  // 부팅 / 실시간 구독
+  // 부팅 / 실시간 구독 — 지침: DB(owners/spec_sheets/qa_threads/corrections) 값이 바뀌면
+  // 대시보드·제원 DB·SUMMARY·질의응답 등 모든 탭이 항상 자동으로 다시 그려지도록 유지한다.
+  // 아래 4개 컬렉션 리스너가 각각 render()를 호출하고, 모든 페이지 렌더 함수(renderDashboard,
+  // renderDbPage, computeSummary, renderQueriesPage 등)는 그때그때 state.sheets/state.threads/
+  // state.corrections를 그대로 다시 읽어 계산한다 — 페이지별로 값을 캐시해 두지 않는다. 새 탭이나
+  // 계산을 추가할 때도 이 원칙(캐시 없이 state에서 매번 새로 계산)을 지켜야 탭 간 값이 어긋나지 않는다.
   // ===================================================================
   var unsubs = [];
   function subscribeAll() {
