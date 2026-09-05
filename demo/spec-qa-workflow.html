@@ -575,7 +575,7 @@
     corrections: [],
     dashFilterMp: "", dashFilterStatus: "",
     summaryFilterMp: "", summaryAutoApplied: false,
-    qFilterMp: "", qFilterDiscipline: "", qFilterType: "", qTechAction: "", qSearch: "", qOpenOnly: false, qRequeryOnly: false, qAutoApplied: false,
+    qFilterMp: "", qFilterDiscipline: "", qFilterType: "", qTechAction: "", qSearch: "", qOpenOnly: true, qRequeryOnly: false, qAutoApplied: false,
     selectedThreadId: null,
     selectedSheet: null,
     activeTab: "items",
@@ -1217,7 +1217,8 @@
     } else if (o && o.role === "DESIGNER" && (o.disciplines || []).length === 1) {
       state.qFilterDiscipline = o.disciplines[0]; state.qFilterMp = ""; state.qOpenOnly = true; state.qAutoApplied = true;
     } else if (state.qAutoApplied) {
-      state.qFilterMp = ""; state.qFilterDiscipline = ""; state.qOpenOnly = false; state.qAutoApplied = false;
+      // 담당자 스코프가 풀려도 "미해결만 보기"는 이 탭의 기본값이므로 꺼두지 않고 유지한다.
+      state.qFilterMp = ""; state.qFilterDiscipline = ""; state.qOpenOnly = true; state.qAutoApplied = false;
     }
   }
 
@@ -1428,7 +1429,8 @@
         '<p style="font-size:12.5px;color:var(--ink-muted);margin:0 0 16px"><b>자동 제원 질의</b>는 로직이 명확한 규칙이 AS-IS→TO-BE를 스스로 계산해 일괄 생성하고, ' +
           "대공정 담당 기술팀이 확인해 특이사항이 없으면 그 자리에서 종결됩니다. 특이사항이 있으면 같은 화면에서 <b>수동 제원 질의</b>로 전환되어, " +
           "설계사 판단 → (특이사항 없으면) 기술팀이 이 탭에서 바로 제원값을 수정해 제안 → 설계사 최종 확인 → DB 최종 반영 순서로 이어집니다. " +
-          "중간에 다시 특이사항이 나오면 반려되어 같은 단계에서 재질의가 반복됩니다. 수동 질의는 설계사가 제원표에서 직접 서술형으로 새로 올릴 수도 있습니다.</p>" +
+          "중간에 다시 특이사항이 나오면 반려되어 같은 단계에서 재질의가 반복됩니다. 수동 질의는 설계사가 제원표에서 직접 서술형으로 새로 올릴 수도 있습니다. " +
+          "기본적으로 <b>미해결 질의만</b> 보여줍니다 — 해결된 질의까지 포함해서 보려면 아래 \"미해결만 보기\" 체크를 해제하세요.</p>" +
         '<div class="panel"><div class="btn-row">' +
           '<button class="btn primary" id="genAutoBtn"' + (state.generating ? " disabled" : "") + ">" + (state.generating ? "생성 중..." : "자동 질의 일괄 생성") + "</button>" +
           (state.genMessage ? '<span style="font-size:12.5px;color:var(--ink-muted);align-self:center">' + esc(state.genMessage) + "</span>" : "") +
