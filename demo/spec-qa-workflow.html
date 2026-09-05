@@ -588,6 +588,7 @@
     expandedVersion: null,
     selectedPjt: "",
     autoRejectFor: null, // AUTO 질의를 "특이사항 있음"으로 전환할 때 사유 입력 폼을 보여줄 thread id
+    changeFormFor: null, // 답변승인 단계에서 "값 변경이 필요합니다"를 눌러 제원 변경 폼을 펼친 thread id
   };
 
   var store = null;
@@ -893,6 +894,17 @@
     };
     if (!approve) patch.requeryCount = (t.requeryCount || 0) + 1;
     return store.updateThread(threadId, patch);
+  }
+  // 답변승인(ANSWER_APPROVED) 단계에서 AS-IS 값 자체가 이미 맞아 바꿀 값이 없을 때: 설계사가 이미 "특이사항
+  // 없음"으로 답변을 승인한 상태이므로, 값 제안 → 재승인의 두 단계를 다시 거치지 않고 기술팀 확인 한 번으로
+  // 바로 종결한다(제원표 값도 바뀌는 게 없으므로 수정 이력은 남기지 않는다).
+  function confirmNoChange(threadId) {
+    var t = threadById(threadId);
+    if (!t) return Promise.resolve();
+    return store.updateThread(threadId, {
+      status: "RESOLVED", toBeValue: t.asIsValue, updatedAt: nowIso(),
+      messages: pushMessage(t, "COMMENT", "기술팀 확인 — AS-IS 값 그대로 확정되어 종결되었습니다 (변경 없음)."),
+    });
   }
   function proposeValue(threadId, newValue) {
     var t = threadById(threadId);
@@ -1428,7 +1440,7 @@
         "<h1 style=\"font-size:19px;margin-bottom:4px\">질의응답 관리</h1>" +
         '<p style="font-size:12.5px;color:var(--ink-muted);margin:0 0 16px"><b>자동 제원 질의</b>는 로직이 명확한 규칙이 AS-IS→TO-BE를 스스로 계산해 일괄 생성하고, ' +
           "대공정 담당 기술팀이 확인해 특이사항이 없으면 그 자리에서 종결됩니다. 특이사항이 있으면 같은 화면에서 <b>수동 제원 질의</b>로 전환되어, " +
-          "설계사 판단 → (특이사항 없으면) 기술팀이 이 탭에서 바로 제원값을 수정해 제안 → 설계사 최종 확인 → DB 최종 반영 순서로 이어집니다. " +
+          "설계사 판단 → (특이사항 없으면) 기술팀이 이 탭에서 확인합니다 — AS-IS 값 그대로면 확인 한 번으로 바로 종결되고, 값을 바꿔야 하면 제원 변경을 제안해 설계사 최종 확인 → DB 반영 순서로 이어집니다. " +
           "중간에 다시 특이사항이 나오면 반려되어 같은 단계에서 재질의가 반복됩니다. 수동 질의는 설계사가 제원표에서 직접 서술형으로 새로 올릴 수도 있습니다. " +
           "기본적으로 <b>미해결 질의만</b> 보여줍니다 — 해결된 질의까지 포함해서 보려면 아래 \"미해결만 보기\" 체크를 해제하세요.</p>" +
         '<div class="panel"><div class="btn-row">' +
@@ -1530,6 +1542,21 @@
       "</div>"
     );
   }
+  // ---- 답변승인(ANSWER_APPROVED) 단계 화면: AS-IS 값이 이미 맞으면 기술팀 확인 한 번으로 바로 종결,
+  // 값을 바꿔야 할 때만 아래 제원 변경 폼을 펼친다. (예전처럼 필드 전부를 보여주는 편집 폼이 기본으로
+  // 뜨지 않도록 한다.) ----
+  function renderApprovedStageActions(t) {
+    if (state.changeFormFor === t.id) {
+      return (t.targets.length === 1 ? renderChangeForm(t) : renderBulkProposeForm(t)) +
+        '<div class="row" style="margin-top:6px"><button class="btn small" data-cancel-change-form="1">취소 · 뒤로</button></div>';
+    }
+    return (
+      '<div class="btn-row">' +
+        '<button class="btn primary" data-confirm-nochange="' + t.id + '">확인 (AS-IS 값 그대로 확정 · DB 반영)</button>' +
+        '<button class="btn" data-open-change-form="' + t.id + '">값 변경이 필요합니다</button>' +
+      "</div>"
+    );
+  }
   function renderQueryDetail(id) {
     var t = threadById(id);
     if (!t) return '<p style="color:var(--ink-faint);font-size:13px">질의를 찾을 수 없습니다.</p>';
@@ -1575,7 +1602,7 @@
         : '<p class="gate-note">이 공종 담당 설계사만 답변을 확인·승인할 수 있습니다.</p>';
     } else if (t.queryType === "MANUAL" && t.status === "ANSWER_APPROVED") {
       actionHtml = (isTech || isAdmin)
-        ? (t.targets.length === 1 ? renderChangeForm(t) : renderBulkProposeForm(t))
+        ? renderApprovedStageActions(t)
         : '<p class="gate-note">이 대공정 담당 기술팀만 제원을 변경할 수 있습니다.</p>';
     } else if (t.queryType === "MANUAL" && t.status === "VALUE_PROPOSED") {
       actionHtml = (isDesigner || isAdmin)
@@ -1622,6 +1649,14 @@
         });
       };
     });
+    Array.prototype.forEach.call(main.querySelectorAll("[data-confirm-nochange]"), function (b) {
+      b.onclick = function () {
+        b.disabled = true;
+        confirmNoChange(b.dataset.confirmNochange).then(function () { state.changeFormFor = null; render(); });
+      };
+    });
+    Array.prototype.forEach.call(main.querySelectorAll("[data-open-change-form]"), function (b) { b.onclick = function () { state.changeFormFor = b.dataset.openChangeForm; render(); }; });
+    Array.prototype.forEach.call(main.querySelectorAll("[data-cancel-change-form]"), function (b) { b.onclick = function () { state.changeFormFor = null; render(); }; });
     Array.prototype.forEach.call(main.querySelectorAll("[data-submit-change]"), function (b) {
       b.onclick = function () {
         var id = b.dataset.submitChange;
