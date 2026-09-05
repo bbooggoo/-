@@ -944,6 +944,31 @@
     };
     return store.updateThread(threadId, patch).then(function () { return store.addThread(newThreadData); });
   }
+  // AUTO 질의를 기술팀이 확인하다 시스템이 계산한 TO-BE 값이 아니라 다른 값이 맞다고 판단될 때: 사유만
+  // 설명하는 특이사항 전환과 달리, 그 값을 직접 입력해 수동 질의로 전환하면서 답변완료·답변승인 단계
+  // 없이 곧장 "값 제안됨"으로 시작한다(수동 질의 ②→⑦ 빠른 경로와 같은 패턴) — 설계사 최종확인만
+  // 받으면 DB에 반영된다.
+  function convertAutoToProposal(threadId, newValue) {
+    var t = threadById(threadId);
+    if (!t) return Promise.resolve({ error: "질의를 찾을 수 없습니다." });
+    var tg = t.targets[0];
+    var check = validateCandidate(tg.sheetCode, tg.itemIdx, tg.field, newValue);
+    if (check.errors.length) return Promise.resolve({ error: "값 제안이 검증 규칙을 통과하지 못했습니다.", errors: check.errors, warnings: check.warnings });
+    var techName = (currentOwner() || {}).name || "기술팀";
+    var patch = {
+      status: "REJECTED", updatedAt: nowIso(),
+      messages: pushMessage(t, "COMMENT", "기술팀이 다른 값을 직접 제안 — 수동 질의로 전환합니다: '" + newValue + "'"),
+    };
+    var newThreadData = {
+      queryType: "MANUAL", pjt: t.pjt, majorProcess: t.majorProcess, discipline: t.discipline, fieldLabel: t.fieldLabel,
+      asIsValue: t.asIsValue, toBeValue: String(newValue), targets: t.targets, status: "VALUE_PROPOSED",
+      title: "[제안] " + t.fieldLabel + " '" + t.asIsValue + "' → '" + newValue + "' 기술팀 제안 (" + t.majorProcess + ")",
+      question: null, createdBy: techName, createdAt: nowIso(), updatedAt: nowIso(),
+      assignedOwnerName: t.assignedOwnerName, convertedFromId: t.id,
+      messages: [{ authorName: techName, role: "COMMENT", content: "AUTO 질의가 제안한 TO-BE '" + t.toBeValue + "' 대신 '" + newValue + "' 값을 직접 제안합니다." + (check.warnings.length ? " (경고: " + check.warnings.join("; ") + ")" : ""), at: nowIso() }],
+    };
+    return store.updateThread(threadId, patch).then(function () { return store.addThread(newThreadData); }).then(function (newId) { return { newId: newId }; });
+  }
   function submitTechAnswer(threadId, content) {
     var t = threadById(threadId);
     if (!t) return Promise.resolve();
@@ -1357,16 +1382,19 @@
     valuePropose: ["아니오 → 값 제안"],
     finalRequery: ["재질의", "(다시 제안 요청)"],
     fastPropose: ["기술팀 값 제안", "(빠른 처리)"],
+    autoFastPropose: ["기술팀 값 제안", "(빠른 처리)"],
   };
   var EDGE_LABEL_DESC = {
     teamAnswer: "②→④ 화살표: 서술형 답변 등록", autoConvert: "①→④ 화살표: 특이사항→수동 전환",
     answerRequery: "④→④ 되돌이 화살표: 답변 재질의", valuePropose: "⑤→⑦ 화살표: 값 제안",
     finalRequery: "⑤→⑤ 되돌이 화살표: 제안 재질의", fastPropose: "②→⑦ 화살표: 답변 단계 건너뛰고 곧장 값 제안(빠른 처리)",
+    autoFastPropose: "①→⑦ 화살표: AUTO 질의에서 기술팀이 곧장 다른 값 제안(빠른 처리)",
   };
   var DEFAULT_GUIDE_STEPS = [
     { id: "s1", num: "①", role: "시스템", title: "AUTO 질의 자동 생성", desc: "검증 규칙(성상별 유량 OVER, 성상명 표준화 등)을 위반한 항목을 시스템이 스스로 찾아 AS-IS→TO-BE 값을 계산하고 대공정 담당 기술팀 앞으로 질의를 일괄 생성합니다. 설계사 개입 없이 바로 기술팀 확인 단계로 넘어갑니다." },
     { id: "s2", num: "①→③", role: "기술팀", title: "AUTO 질의 확인 (특이사항 없음)", desc: "\"확인\" 버튼 한 번으로 TO-BE 값이 그 자리에서 제원 DB에 반영되고 질의가 즉시 해결됩니다. 본인이 담당하는 대공정의 질의만 확인할 수 있습니다." },
     { id: "s3", num: "①→④", role: "기술팀", title: "AUTO 질의에 특이사항 있음 → 수동 전환", desc: "제안된 값이 틀렸거나 추가 논의가 필요하면 \"특이사항 있음\"을 누르고 사유를 입력합니다. 같은 대상·필드를 그대로 들고 수동 질의로 자동 전환되며, 이미 사유를 설명했으므로 설계사 검토(④→답변완료) 단계에서 바로 시작합니다." },
+    { id: "s3b", num: "①→⑦", role: "기술팀", title: "AUTO 질의에서 기술팀이 곧장 다른 값 제안 (빠른 처리)", desc: "시스템이 계산한 TO-BE 값이 아니라 다른 값이 맞다고 판단되면, 사유만 설명하는 수동 전환 대신 \"값 제안 (빠른 처리)\"으로 그 값을 직접 입력해 제안할 수 있습니다. 제안하면 수동 질의로 전환되면서 답변완료·답변승인 단계 없이 곧장 \"값 제안됨\" 상태로 시작해 설계사 최종확인만 받으면 됩니다. 성상명·자재명은 표준 목록 콤보박스에서만 고를 수 있습니다." },
     { id: "s4", num: "②", role: "설계사", title: "MANUAL 질의 등록", desc: "제원표의 특정 항목에 대해 공종 담당 설계사가 직접 서술형으로 질문을 올립니다(제원표 상세의 \"검증 결과\" 탭에서도 등록 가능). PJT·대공정·필드가 함께 기록됩니다." },
     { id: "s5", num: "②→④", role: "기술팀", title: "AS-IS 값 승인 또는 서술형 답변", desc: "AS-IS 값 자체가 맞으면 \"AS-IS 값 승인\" 버튼 한 번으로, 또는 직접 서술형으로 답변을 작성해 등록합니다. 등록하면 \"답변완료(TECH_ANSWERED)\" 상태로 넘어가 설계사 검토를 기다립니다. 성상명·자재명은 표준 목록에서만 고를 수 있는 콤보박스로 되어 있습니다." },
     { id: "s5b", num: "②→⑦", role: "기술팀", title: "MANUAL 질의에서 곧장 제원 변경 제안 (빠른 처리)", desc: "값을 바로 고쳐야 하는 게 명확하면 답변완료·답변승인 단계를 거치지 않고 \"제원 변경 제안\"으로 즉시 값을 제안할 수 있습니다. 제안하면 바로 \"값 제안됨\" 상태로 넘어가 설계사 최종확인만 받으면 되고, 이때도 성상명·자재명은 표준 목록 콤보박스에서만 고를 수 있습니다." },
@@ -1405,7 +1433,7 @@
     return {
       tech: [
         { label: "AUTO 질의 확인 (특이사항 없음)", count: auto.filter(function (t) { return t.status === "RESOLVED"; }).length },
-        { label: "AUTO 특이사항 → 수동 전환", count: manual.filter(function (t) { return t.convertedFromId; }).length },
+        { label: "AUTO → 수동 전환 (특이사항 · 값 제안)", count: manual.filter(function (t) { return t.convertedFromId; }).length },
         { label: "서술형 답변 등록 (재답변 포함)", count: techAnswerMsgCount },
         { label: "값 확인 (변경 없음 · 즉시 종결)", count: noChangeResolvedCount },
         { label: "제원 변경 값 제안 (재제안 포함)", count: proposeTotal },
@@ -1486,6 +1514,10 @@
     // (기술팀이 즉시 제원 변경을 제안 → 설계사 최종확인만 남는다)
     p.push(arrow("850,60 1000,60 1000,1100 650,1100", { color: "var(--accent)", marker: "flowArrowAccent" }));
     p.push(label(1000, 580, edgeLabels.fastPropose, { color: "var(--accent-strong)", w: 130 }));
+    // 신규 단축 경로: AUTO 질의(OPEN)에서도 기술팀이 시스템 제안값 대신 다른 값을 직접 제안할 수 있다
+    // (수동 전환 + 곧장 값 제안됨으로 시작, 설계사 최종확인만 남는다)
+    p.push(arrow("190,60 20,60 20,1100 390,1100", { color: "var(--accent)", marker: "flowArrowAccent" }));
+    p.push(label(75, 580, edgeLabels.autoFastPropose, { color: "var(--accent-strong)", w: 130 }));
     // AUTO 확인 분기
     p.push(diamond(300, 220, 125, 80, nodeLabels.D1, "tech"));
     p.push(arrow("175,220 140,220 140,366", { color: "var(--ok)", marker: "flowArrowOk" }));
@@ -1624,7 +1656,7 @@
           "</div>" +
           (state.guideSaveError ? '<p class="error-text">' + esc(state.guideSaveError) + "</p>" : "") +
           '<figure style="margin:10px 0 0"><div class="flow-wrap">' + buildFlowSvg(nodeLabels, edgeLabels) + "</div>" +
-            '<figcaption class="flow-caption">① AUTO 질의부터 ⑧ 최종 DB 반영까지 — 실선 화살표는 다음 단계로 진행, 굵은 청록 화살표(②→⑦)는 답변 단계를 건너뛰고 곧장 값을 제안하는 빠른 경로, 점선(주황) 화살표는 반려로 인한 재질의 되돌아가기를 뜻합니다.</figcaption>' +
+            '<figcaption class="flow-caption">① AUTO 질의부터 ⑧ 최종 DB 반영까지 — 실선 화살표는 다음 단계로 진행, 굵은 청록 화살표(①→⑦, ②→⑦)는 중간 단계를 건너뛰고 기술팀이 곧장 값을 제안하는 빠른 경로, 점선(주황) 화살표는 반려로 인한 재질의 되돌아가기를 뜻합니다.</figcaption>' +
           "</figure>" +
           '<div class="flow-legend">' +
             '<div class="item"><span class="sw" style="background:var(--accent)"></span>기술팀이 처리</div>' +
@@ -2013,6 +2045,22 @@
       "</div>"
     );
   }
+  // ---- AUTO 질의(OPEN)에서 기술팀이 시스템 제안값이 아닌 다른 값을 직접 제안할 때 쓰는 폼(빠른 처리) ----
+  function renderAutoProposeForm(t) {
+    var tg0 = t.targets[0];
+    var item0 = ((state.sheets[tg0.sheetCode] || {}).items || [])[tg0.itemIdx];
+    var stdOptions = item0 ? standardOptionsFor(item0.category, t.fieldLabel) : null;
+    var control = stdOptions
+      ? '<select class="text" id="autoProposeValue">' + stdOptions.map(function (o) { return '<option value="' + esc(o) + '"' + (o === t.toBeValue ? " selected" : "") + ">" + esc(o) + "</option>"; }).join("") + "</select>"
+      : '<input class="text" id="autoProposeValue" value="' + esc(t.toBeValue || "") + '">';
+    return (
+      '<div class="thread-form">' +
+        '<label class="field-label">기술팀이 직접 값 제안 — ' + esc(t.fieldLabel) + " (시스템 제안값 '" + esc(t.toBeValue) + "' 대신 다른 값을 대상 " + t.targets.length + "건 전체에 동일하게 적용)" + (stdOptions ? " · 표준 목록에서 선택" : "") + "</label>" +
+        control +
+        '<div class="row" style="margin-top:6px"><button class="btn primary small" data-auto-propose="' + t.id + '">값 제안</button><button class="btn small" data-cancel-change-form="1">취소</button></div>' +
+      "</div>"
+    );
+  }
   // ---- 최초 수동 질의(OPEN) 단계 화면: AS-IS 값이 맞으면 버튼 한 번으로 답변완료 처리하고, 값을
   // 바로 고쳐야 한다면 같은 화면에서 제원 변경을 제안해 답변완료·답변승인 두 단계를 건너뛰고 곧장
   // 설계사 최종확인만 받도록 한다(값을 바로 고칠 필요는 없지만 설명이 필요할 때는 서술형 답변도 그대로
@@ -2078,8 +2126,14 @@
         actionHtml = '<div class="thread-form"><label class="field-label">특이사항 내용 (등록하면 수동 질의로 전환되어 설계사 판단 단계로 넘어갑니다)</label>' +
           '<textarea rows="3" id="autoRejectReason"></textarea>' +
           '<div class="row"><button class="btn primary small" data-confirm-auto-reject="' + t.id + '">특이사항 등록 · 수동 질의 전환</button><button class="btn small" data-cancel-auto-reject="1">취소</button></div></div>';
+      } else if (state.changeFormFor === t.id) {
+        actionHtml = renderAutoProposeForm(t);
       } else {
-        actionHtml = '<div class="btn-row"><button class="btn primary" data-auto-approve="' + t.id + '">확인 (특이사항 없음 · TO-BE 반영)</button><button class="btn" data-auto-reject="' + t.id + '">특이사항 있음 (수동 질의로 전환)</button></div>';
+        actionHtml = '<div class="btn-row">' +
+          '<button class="btn primary" data-auto-approve="' + t.id + '">확인 (특이사항 없음 · TO-BE 반영)</button>' +
+          '<button class="btn" data-open-change-form="' + t.id + '">값 제안 (빠른 처리)</button>' +
+          '<button class="btn" data-auto-reject="' + t.id + '">특이사항 있음 (수동 질의로 전환)</button>' +
+        "</div>";
       }
     } else if (t.queryType === "MANUAL" && t.status === "OPEN") {
       actionHtml = (isTech || isAdmin)
@@ -2184,6 +2238,19 @@
     });
     Array.prototype.forEach.call(main.querySelectorAll("[data-final-approve]"), function (b) { b.onclick = function () { b.disabled = true; decideFinal(b.dataset.finalApprove, true).then(render); }; });
     Array.prototype.forEach.call(main.querySelectorAll("[data-final-reject]"), function (b) { b.onclick = function () { b.disabled = true; decideFinal(b.dataset.finalReject, false).then(render); }; });
+    Array.prototype.forEach.call(main.querySelectorAll("[data-auto-propose]"), function (b) {
+      b.onclick = function () {
+        var val = (document.getElementById("autoProposeValue").value || "").trim();
+        if (!val) return;
+        b.disabled = true;
+        convertAutoToProposal(b.dataset.autoPropose, val).then(function (res) {
+          if (res && res.error) { reportThreadError(res); b.disabled = false; return; }
+          state.changeFormFor = null;
+          if (res && res.newId) state.selectedThreadId = res.newId;
+          render();
+        });
+      };
+    });
   }
 
   // ===================================================================
