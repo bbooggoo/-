@@ -236,6 +236,18 @@
   .target-table td { padding: 8px 10px; border-bottom: 1px solid var(--border); }
   .target-table .tobe { font-weight: 700; color: var(--accent-strong); }
 
+  /* ---------------- 업무 가이드 (플로우차트) ---------------- */
+  .flow-wrap { background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 14px; overflow-x: auto; }
+  .flow-wrap svg { display: block; margin: 0 auto; width: 100%; max-width: 760px; height: auto; min-width: 620px; }
+  .flow-caption { font-size: 12px; color: var(--ink-faint); margin: 10px 2px 0; text-align: center; }
+  .flow-legend { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 12px; }
+  .flow-legend .item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-muted); }
+  .flow-legend .sw { width: 12px; height: 12px; border-radius: 3px; flex: none; }
+  .guide-step { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 8px; background: var(--surface-2); }
+  .guide-step .gs-num { flex: none; font-family: var(--mono); font-size: 11px; color: var(--ink-faint); min-width: 18px; padding-top: 2px; }
+  .guide-step b { font-size: 13px; }
+  .guide-step p { margin: 3px 0 0; font-size: 12.5px; color: var(--ink-muted); }
+
   /* ---------------- owners page ---------------- */
   .owner-table { width: 100%; font-size: 12.5px; }
   .owner-table th { text-align: left; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--ink-faint); font-weight: 600; padding: 0 10px 8px; border-bottom: 1px solid var(--border); }
@@ -567,7 +579,7 @@
   // 상태
   // ===================================================================
   var state = {
-    page: "dashboard", // dashboard | summary | queries | upload | owners | sheet
+    page: "dashboard", // guide | dashboard | db | summary | queries | upload | owners | sheet
     userId: null,
     owners: [],          // [{id,name,role,majorProcesses,disciplines}]
     sheets: {},           // code -> {code,dept,title,location,items,...}
@@ -1165,6 +1177,7 @@
   // 렌더링: topbar / page-nav
   // ===================================================================
   var PAGES = [
+    { id: "guide", label: "업무 가이드" },
     { id: "dashboard", label: "대시보드" },
     { id: "db", label: "제원 DB" },
     { id: "summary", label: "SUMMARY" },
@@ -1232,6 +1245,166 @@
       // 담당자 스코프가 풀려도 "미해결만 보기"는 이 탭의 기본값이므로 꺼두지 않고 유지한다.
       state.qFilterMp = ""; state.qFilterDiscipline = ""; state.qOpenOnly = true; state.qAutoApplied = false;
     }
+  }
+
+  // ===================================================================
+  // 업무 가이드 — 제원 질의응답의 전체 처리 흐름을 플로우차트 하나로 보여준다. 신규 담당자가
+  // 매뉴얼처럼 참고할 수 있도록 자동/수동, 재질의, 값 변경 없이 확인만으로 종결되는 경우까지
+  // 실제 상태값(OPEN/TECH_ANSWERED/...)과 게이팅 규칙을 그대로 반영해 그렸다.
+  // ===================================================================
+  var FLOW_SVG = (function () {
+    function lineTspans(cx, lines, lineH) {
+      return lines.map(function (t, i) {
+        var dy = i === 0 ? (lines.length > 1 ? -((lines.length - 1) * lineH) / 2 : 0) : lineH;
+        return '<tspan x="' + cx + '" dy="' + dy + '">' + esc(t) + "</tspan>";
+      }).join("");
+    }
+    var RECT_STYLE = {
+      neutral: ["var(--surface)", "var(--border-strong)", "var(--ink)"],
+      done: ["var(--ok-soft)", "var(--ok)", "var(--ok)"],
+    };
+    var DIAMOND_STYLE = {
+      tech: ["var(--accent-soft)", "var(--accent)", "var(--accent-strong)"],
+      designer: ["var(--warn-soft)", "var(--warn)", "var(--warn)"],
+    };
+    function rect(cx, cy, w, h, lines, kind) {
+      var c = RECT_STYLE[kind];
+      return (
+        '<rect x="' + (cx - w / 2) + '" y="' + (cy - h / 2) + '" width="' + w + '" height="' + h + '" rx="10" fill="' + c[0] + '" stroke="' + c[1] + '" stroke-width="1.5"/>' +
+        '<text x="' + cx + '" y="' + cy + '" text-anchor="middle" font-size="12.5" font-weight="600" fill="' + c[2] + '">' + lineTspans(cx, lines, 15) + "</text>"
+      );
+    }
+    function diamond(cx, cy, hw, hh, lines, kind) {
+      var c = DIAMOND_STYLE[kind];
+      var pts = [cx + "," + (cy - hh), (cx + hw) + "," + cy, cx + "," + (cy + hh), (cx - hw) + "," + cy].join(" ");
+      return (
+        '<polygon points="' + pts + '" fill="' + c[0] + '" stroke="' + c[1] + '" stroke-width="1.5"/>' +
+        '<text x="' + cx + '" y="' + cy + '" text-anchor="middle" font-size="12" font-weight="600" fill="' + c[2] + '">' + lineTspans(cx, lines, 15) + "</text>"
+      );
+    }
+    function arrow(points, opts) {
+      opts = opts || {};
+      var dash = opts.dashed ? ' stroke-dasharray="5,4"' : "";
+      return '<polyline points="' + points + '" fill="none" stroke="' + (opts.color || "var(--ink-faint)") + '"' + dash + ' stroke-width="1.6" marker-end="url(#' + (opts.marker || "flowArrow") + ')"/>';
+    }
+    function label(x, y, lines, opts) {
+      opts = opts || {};
+      var color = opts.color || "var(--ink-muted)";
+      var w = opts.w || 120, h = lines.length * 14 + 8;
+      var lineHtml = lines.map(function (t, i) { return '<tspan x="' + x + '" dy="' + (i === 0 ? 0 : 14) + '">' + esc(t) + "</tspan>"; }).join("");
+      return (
+        '<rect x="' + (x - w / 2) + '" y="' + (y - h / 2) + '" width="' + w + '" height="' + h + '" rx="4" fill="var(--surface-2)" opacity="0.95"/>' +
+        '<text x="' + x + '" y="' + (y - h / 2 + 12) + '" text-anchor="middle" font-size="11" font-weight="600" fill="' + color + '">' + lineHtml + "</text>"
+      );
+    }
+    var p = [];
+    p.push(
+      "<defs>" +
+        '<marker id="flowArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--ink-faint)"/></marker>' +
+        '<marker id="flowArrowOk" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--ok)"/></marker>' +
+        '<marker id="flowArrowWarn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--warn)"/></marker>' +
+      "</defs>"
+    );
+    // 시작 — 두 갈래 진입점 (자동 감지 / 설계사 등록)
+    p.push(rect(300, 60, 220, 64, ["① AUTO 질의 생성", "미답변 (OPEN)"], "neutral"));
+    p.push(rect(740, 60, 220, 64, ["② MANUAL 질의 생성", "미답변 (OPEN) · 설계사 등록"], "neutral"));
+    p.push(arrow("300,92 300,140"));
+    p.push(arrow("740,92 740,335 650,335 650,366"));
+    p.push(label(700, 335, ["기술팀 서술형", "답변 등록"], { w: 100 }));
+    // AUTO 확인 분기
+    p.push(diamond(300, 220, 125, 80, ["기술팀 확인", "특이사항 없음?"], "tech"));
+    p.push(arrow("175,220 140,220 140,366", { color: "var(--ok)", marker: "flowArrowOk" }));
+    p.push(label(150, 190, ["예"], { color: "var(--ok)", w: 26 }));
+    p.push(rect(150, 400, 230, 68, ["③ 해결됨 (RESOLVED)", "TO-BE 값 자동 반영"], "done"));
+    p.push(arrow("300,300 300,335 520,335 520,366", { color: "var(--warn)" }));
+    p.push(label(430, 335, ["아니오 → 수동 전환", "(TECH_ANSWERED로 시작)"], { color: "var(--warn)", w: 190 }));
+    // 답변완료 (양쪽 진입점 합류)
+    p.push(rect(520, 400, 260, 68, ["④ 답변완료", "(TECH_ANSWERED)"], "neutral"));
+    p.push(arrow("520,434 520,475"));
+    // 설계사 검토 분기 (재질의 루프 #1)
+    p.push(diamond(520, 560, 140, 85, ["설계사 검토", "특이사항 없음?"], "designer"));
+    p.push(arrow("660,560 920,560 920,60 850,60", { color: "var(--warn)", dashed: true, marker: "flowArrowWarn" }));
+    p.push(label(920, 300, ["재질의", "(다시 답변 요청)"], { color: "var(--warn)", w: 100 }));
+    p.push(arrow("520,645 520,708", { color: "var(--ok)", marker: "flowArrowOk" }));
+    p.push(label(562, 675, ["예"], { color: "var(--ok)", w: 26 }));
+    // 답변승인
+    p.push(rect(520, 740, 260, 64, ["⑤ 답변승인", "(ANSWER_APPROVED)"], "neutral"));
+    p.push(arrow("520,772 520,830"));
+    // 기술팀 확인 — AS-IS 값 유지 여부 (신규: 값이 그대로면 확인만으로 즉시 종결)
+    p.push(diamond(520, 920, 150, 90, ["기술팀 확인", "AS-IS 값 그대로", "맞는가?"], "tech"));
+    p.push(arrow("370,920 350,920", { color: "var(--ok)", marker: "flowArrowOk" }));
+    p.push(label(360, 895, ["예"], { color: "var(--ok)", w: 26 }));
+    p.push(rect(230, 920, 240, 68, ["⑥ 해결됨 (RESOLVED)", "확인만으로 즉시 종결"], "done"));
+    p.push(arrow("520,1010 520,1068"));
+    p.push(label(605, 1039, ["아니오 → 값 제안"], { w: 128 }));
+    // 값 제안됨
+    p.push(rect(520, 1100, 260, 64, ["⑦ 값 제안됨", "(VALUE_PROPOSED)"], "neutral"));
+    p.push(arrow("520,1132 520,1190"));
+    // 설계사 최종확인 분기 (재질의 루프 #2)
+    p.push(diamond(520, 1280, 150, 90, ["설계사 최종확인", "제안값 승인?"], "designer"));
+    p.push(arrow("370,1280 100,1280 100,740 390,740", { color: "var(--warn)", dashed: true, marker: "flowArrowWarn" }));
+    p.push(label(100, 1000, ["재질의", "(다시 제안 요청)"], { color: "var(--warn)", w: 100 }));
+    p.push(arrow("520,1370 520,1420", { color: "var(--ok)", marker: "flowArrowOk" }));
+    p.push(label(562, 1395, ["예"], { color: "var(--ok)", w: 26 }));
+    // 최종 종결
+    p.push(rect(520, 1460, 340, 80, ["⑧ 해결됨 (RESOLVED)", "DB 반영 · 수정이력 기록 · 버전+1"], "done"));
+    return (
+      '<svg viewBox="0 0 1040 1530" role="img" aria-label="제원 질의응답 처리 흐름: 자동/수동 질의가 담당 기술팀과 설계사 사이를 오가며 미답변에서 해결됨까지 거치는 모든 상태와 재질의 루프를 보여준다">' +
+      p.join("") +
+      "</svg>"
+    );
+  })();
+  function renderGuidePage(main) {
+    main.innerHTML =
+      '<div class="page">' +
+        "<h1 style=\"font-size:19px;margin-bottom:4px\">업무 가이드</h1>" +
+        '<p style="font-size:12.5px;color:var(--ink-muted);margin:0 0 16px">처음 이 화면을 쓰는 담당자를 위한 매뉴얼입니다. 제원 질의 하나가 등록되고 나서 ' +
+          "최종 DB 반영으로 종결되기까지 실제로 거치는 모든 경로(자동/수동, 재질의, 값 변경 없이 확인만 하는 경우)를 아래 흐름도 한 장에 담았습니다 — " +
+          "\"질의응답\" 탭에서 보이는 상태 칩(미답변/답변완료/답변승인/값 제안됨/해결됨) 문구와 그대로 대응됩니다.</p>" +
+        '<div class="panel">' +
+          "<h2>전체 처리 흐름</h2>" +
+          '<figure style="margin:10px 0 0"><div class="flow-wrap">' + FLOW_SVG + "</div>" +
+            '<figcaption class="flow-caption">① AUTO 질의부터 ⑧ 최종 DB 반영까지 — 실선 화살표는 다음 단계로 진행, 점선(주황) 화살표는 반려로 인한 재질의 되돌아가기를 뜻합니다.</figcaption>' +
+          "</figure>" +
+          '<div class="flow-legend">' +
+            '<div class="item"><span class="sw" style="background:var(--accent)"></span>기술팀이 처리</div>' +
+            '<div class="item"><span class="sw" style="background:var(--warn)"></span>설계사가 처리</div>' +
+            '<div class="item"><span class="sw" style="background:var(--border-strong)"></span>진행 중 상태(대기)</div>' +
+            '<div class="item"><span class="sw" style="background:var(--ok)"></span>종결(RESOLVED)</div>' +
+          "</div>" +
+        "</div>" +
+        '<div class="panel">' +
+          "<h2>단계별 설명</h2>" +
+          '<p class="lead" style="margin-top:4px">번호는 위 흐름도의 ①~⑧과 같습니다.</p>' +
+          guideStep("①", "시스템", "AUTO 질의 자동 생성", "검증 규칙(성상별 유량 OVER, 성상명 표준화 등)을 위반한 항목을 시스템이 스스로 찾아 AS-IS→TO-BE 값을 계산하고 대공정 담당 기술팀 앞으로 질의를 일괄 생성합니다. 설계사 개입 없이 바로 기술팀 확인 단계로 넘어갑니다.") +
+          guideStep("①→③", "기술팀", "AUTO 질의 확인 (특이사항 없음)", "\"확인\" 버튼 한 번으로 TO-BE 값이 그 자리에서 제원 DB에 반영되고 질의가 즉시 해결됩니다. 본인이 담당하는 대공정의 질의만 확인할 수 있습니다.") +
+          guideStep("①→④", "기술팀", "AUTO 질의에 특이사항 있음 → 수동 전환", "제안된 값이 틀렸거나 추가 논의가 필요하면 \"특이사항 있음\"을 누르고 사유를 입력합니다. 같은 대상·필드를 그대로 들고 수동 질의로 자동 전환되며, 이미 사유를 설명했으므로 설계사 검토(④→답변완료) 단계에서 바로 시작합니다.") +
+          guideStep("②", "설계사", "MANUAL 질의 등록", "제원표의 특정 항목에 대해 공종 담당 설계사가 직접 서술형으로 질문을 올립니다(제원표 상세의 \"검증 결과\" 탭에서도 등록 가능). PJT·대공정·필드가 함께 기록됩니다.") +
+          guideStep("②→④", "기술팀", "서술형 답변 등록", "대공정 담당 기술팀이 질의 내용을 확인하고 서술형으로 답변을 작성합니다. 등록하면 \"답변완료(TECH_ANSWERED)\" 상태로 넘어가 설계사 검토를 기다립니다.") +
+          guideStep("④→⑤", "설계사", "답변 검토", "기술팀 답변에 특이사항이 없으면 \"답변승인\"으로 넘겨 기술팀이 제원을 변경(또는 확인)하게 합니다. 특이사항이 있으면 \"재질의\"로 반려해 기술팀이 다시 답변하도록 되돌립니다(재질의 횟수가 1 늘어납니다).") +
+          guideStep("⑤→⑥/⑦", "기술팀", "값 확인 또는 제원 변경 제안", "AS-IS 값 자체가 이미 맞다면 \"확인\" 버튼 한 번으로 값 변경 없이 바로 종결됩니다. 실제로 값을 고쳐야 한다면 \"값 변경이 필요합니다\"를 눌러 필드를 수정해 제안하고, 검증 규칙(유량 OVER, 성상명 표준화 등)을 통과해야 등록됩니다.") +
+          guideStep("⑦→⑧", "설계사", "최종 확인", "제안된 값이 맞으면 \"최종 확인\"으로 그 자리에서 제원 DB에 반영되고 종결됩니다 — 수정 이력이 남고 해당 건설코드의 버전이 하나 올라갑니다. 값이 틀렸으면 \"재질의\"로 반려해 기술팀이 다시 제안하게 합니다.") +
+        "</div>" +
+        '<div class="panel">' +
+          "<h2>화면 기능 한눈에 보기</h2>" +
+          '<ul style="margin:8px 0 0;padding-left:18px;font-size:12.5px;color:var(--ink-muted);line-height:1.7">' +
+            "<li>질의응답 탭은 처음 들어가면 <b>미해결만 보기</b>가 기본으로 켜져 있습니다 — 해결된 질의까지 보려면 체크를 해제하세요.</li>" +
+            "<li><b>기술팀 확인 유형</b> 필터로 지금 내가 처리해야 할 질의를 \"제원DB수정 필요\" / \"서술형 답변 필요\" / \"그 외 확인필요\"로 나눠 볼 수 있습니다.</li>" +
+            "<li>건설코드/설비모듈/필드/제목으로 <b>검색</b>할 수 있고, <b>재질의 있는 것만 보기</b>로 반려가 반복된 질의만 따로 볼 수 있습니다.</li>" +
+            "<li>제원 DB·제원 항목 화면에서 값이 바뀐 셀에는 <b>음영</b>이 표시되고, 커서를 대면 언제·누가·어떤 값에서 어떤 값으로 바꿨는지 보입니다.</li>" +
+            "<li>상단 <b>PJT 선택</b>으로 사업장·단계를 좁히면 대시보드·SUMMARY·제원 DB·질의응답이 전부 그 PJT 데이터만 보여줍니다.</li>" +
+          "</ul>" +
+        "</div>" +
+      "</div>";
+  }
+  function guideStep(num, roleLabel, title, desc) {
+    var chipClass = roleLabel === "기술팀" ? "role-TECH_LEAD" : roleLabel === "설계사" ? "role-DESIGNER" : "neutral";
+    return (
+      '<div class="guide-step"><div class="gs-num">' + esc(num) + '</div><div class="body">' +
+        '<span class="chip ' + chipClass + '">' + esc(roleLabel) + "</span> <b>" + esc(title) + "</b>" +
+        "<p>" + esc(desc) + "</p>" +
+      "</div></div>"
+    );
   }
 
   // ===================================================================
@@ -2061,7 +2234,8 @@
     renderUserSelect();
     renderPageNav();
     var main = document.getElementById("mainArea");
-    if (state.page === "dashboard") renderDashboard(main);
+    if (state.page === "guide") renderGuidePage(main);
+    else if (state.page === "dashboard") renderDashboard(main);
     else if (state.page === "db") renderDbPage(main);
     else if (state.page === "summary") renderSummaryPage(main);
     else if (state.page === "queries") renderQueriesPage(main);
