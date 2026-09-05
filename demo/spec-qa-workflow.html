@@ -362,6 +362,44 @@
   // services/rules/alias_correction_rule.py 미러링: 비표준 표기 -> 표준값
   var ALIAS_MAP = { "GN2": "N2", "LN2": "N2", "질소": "N2", "N2 GAS": "N2" };
 
+  // ---- 대분류별 표준 성상명/자재명 목록 — 더미 데이터 생성과 수동 질의·제원 변경 화면의 콤보박스가
+  // 이 목록 하나를 그대로 같이 쓴다(아래 fillDummyData도 이 값을 그대로 참조). 성상명/자재명을 자유
+  // 텍스트로 잘못 입력해 표준화 이슈가 새로 생기는 일을 막는 게 목적이라, 여기 없는 값은 "성상별 유량
+  // OVER·표준화" 같은 검증 규칙이 있는 GAS/AIR 외에는 강제로 막지 않고 콤보박스 선택지로만 제공한다. ----
+  var SPGAS_MATERIALS = ["SiH4", "PH3", "WF6", "B2H6", "NF3", "C2F6", "AsH3", "GeH4", "HCl", "SiF4", "COS"];
+  var CHEM_SPECIES = ["IPA", "황산", "불산", "암모니아수", "과산화수소", "TMAH", "PR", "DEVELOPER", "BOE", "아세톤"];
+  var UPW_SPECIES = ["HOT DI", "COLD DI", "RO WATER", "DI WATER"];
+  var WATER_SPECIES = ["PCW", "ICW", "RCW"];
+  var WASTEWATER_SPECIES = ["IWW1", "IWW2", "AKWW", "OWW", "FWW"];
+  var EXHAUST_SPECIES = ["FUME", "VOC", "ACID EXHAUST", "ALKALI EXHAUST", "TOXIC EXHAUST", "GENERAL EXHAUST"];
+  var WASTE_MATERIALS = ["SiH4", "ACID WASTE", "ALKALI WASTE", "SOLVENT WASTE", "SLUDGE"];
+  // 대분류(category) -> 표준화 대상 필드/선택지. 수동 질의 답변·제원 변경 화면에서 성상명/자재명
+  // 입력란을 이 목록 기반 콤보박스로 바꾸는 데 쓴다.
+  var STANDARD_VALUE_OPTIONS = {
+    "GAS/AIR": { field: "성상명", options: GAS_ALLOWED },
+    "WATER": { field: "성상명", options: WATER_SPECIES },
+    "WASTE WATER": { field: "성상명", options: WASTEWATER_SPECIES },
+    "EXHAUST": { field: "성상명", options: EXHAUST_SPECIES },
+    "CHEMICAL": { field: "성상명", options: CHEM_SPECIES },
+    "UPW": { field: "성상명", options: UPW_SPECIES },
+    "SPECIALITY GAS": { field: "자재명", options: SPGAS_MATERIALS },
+    "폐액": { field: "자재명", options: WASTE_MATERIALS },
+  };
+  function standardOptionsFor(category, field) {
+    var spec = STANDARD_VALUE_OPTIONS[category];
+    return (spec && spec.field === field) ? spec.options : null;
+  }
+  // 표준 목록 기반 콤보박스 — 현재값이 목록에 없는 비표준 값이면 맨 위에 "(현재값·비표준)"으로 얹어
+  // 보여주고, 그 값을 선택하지 않고 목록의 표준값을 고르면 그 자리에서 표준화가 이뤄진다.
+  function standardSelectHtml(field, options, val, extraClass) {
+    var cur = val == null ? "" : String(val);
+    var nonStandard = cur !== "" && options.indexOf(cur) === -1;
+    var opts = (nonStandard ? ['<option value="' + esc(cur) + '" selected>' + esc(cur) + " (현재값·비표준)</option>"] : [])
+      .concat(options.map(function (o) { return '<option value="' + esc(o) + '"' + (!nonStandard && o === cur ? " selected" : "") + ">" + esc(o) + "</option>"; }))
+      .join("");
+    return '<select class="' + (extraClass || "text") + '" data-field="' + esc(field) + '" data-orig="' + esc(cur) + '">' + opts + "</select>";
+  }
+
   // services/aggregation.py AGGREGATION_SPECS 와 동일
   var AGG_SPECS = {
     "POWER": { unit: "KW", groupBy: "전원종류", fields: ["전력값"] },
@@ -472,22 +510,16 @@
       return Math.round(v * m) / m;
     }
 
-    var GAS_STANDARD = ["N2", "O2", "AR", "CDA", "HE", "H2"];
+    // 성상명/자재명 표준 목록(SPGAS_MATERIALS 등)은 위에서 이미 선언한 전역 상수를 그대로 쓴다 —
+    // 더미 데이터 생성과 질의응답 화면의 콤보박스가 같은 목록을 보도록 하기 위해서다.
     var GAS_NONSTANDARD = ["GN2", "LN2", "질소", "N2 GAS"];
-    var SPGAS_MATERIALS = ["SiH4", "PH3", "WF6", "B2H6", "NF3", "C2F6", "AsH3", "GeH4", "HCl", "SiF4", "COS"];
-    var CHEM_SPECIES = ["IPA", "황산", "불산", "암모니아수", "과산화수소", "TMAH", "PR", "DEVELOPER", "BOE", "아세톤"];
-    var UPW_SPECIES = ["HOT DI", "COLD DI", "RO WATER", "DI WATER"];
-    var WATER_SPECIES = ["PCW", "ICW", "RCW"];
-    var WASTEWATER_SPECIES = ["IWW1", "IWW2", "AKWW", "OWW", "FWW"];
-    var EXHAUST_SPECIES = ["FUME", "VOC", "ACID EXHAUST", "ALKALI EXHAUST", "TOXIC EXHAUST", "GENERAL EXHAUST"];
-    var WASTE_MATERIALS = ["SiH4", "ACID WASTE", "ALKALI WASTE", "SOLVENT WASTE", "SLUDGE"];
     var PIPE_MATERIALS = ["SUS316L", "SUS304", "PVC", "PVDF", "CPVC", "HDPE"];
     var EQUIP_MODULES = ["MAIN", "SCRUBBER", "GAS CABINET", "SUB", "CDA UNIT", "CHILLER", "PUMP UNIT"];
     var BUILDING_LETTERS = ["A", "B", "C", "D", "E", "F", "G", "H", "J", "K"];
 
     function genGasItem() {
       var nonstandard = chance(0.08);
-      var species = nonstandard ? pick(GAS_NONSTANDARD) : pick(GAS_STANDARD);
+      var species = nonstandard ? pick(GAS_NONSTANDARD) : pick(GAS_ALLOWED);
       var canonicalKey = nonstandard ? (ALIAS_MAP[species] || species) : species;
       var base = GAS_THRESHOLDS[canonicalKey] || 8;
       var over = chance(0.1);
@@ -917,6 +949,12 @@
     if (!t) return Promise.resolve();
     return store.updateThread(threadId, { status: "TECH_ANSWERED", updatedAt: nowIso(), messages: pushMessage(t, "ANSWER", content) });
   }
+  // 최초 수동 질의(OPEN)에서 AS-IS 값 자체가 이미 맞을 때: 서술형 답변을 직접 타이핑하지 않아도 버튼
+  // 한 번으로 같은 효과(답변완료 · 설계사 검토 대기)를 내도록 한다 — 그래도 설계사 검토(④→⑤)는
+  // 그대로 거치므로, 값이 DB에 반영되려면 반드시 설계사가 한 번은 확인하게 된다.
+  function approveAsIsAnswer(threadId) {
+    return submitTechAnswer(threadId, "AS-IS 값 확인 완료 — 특이사항 없습니다.");
+  }
   function decideAnswer(threadId, approve) {
     var t = threadById(threadId);
     if (!t) return Promise.resolve();
@@ -926,7 +964,10 @@
     };
     // requeryCount(전체 재질의 누적)와 별개로, 업무 가이드 탭의 케이스별 집계가 "답변 단계에서의
     // 재질의"만 따로 셀 수 있도록 answerRequeryCount도 함께 늘린다 — 이 필드들은 실제 처리 로직(이 함수)
-    // 안에서만 증가하므로 가이드 탭 통계가 항상 실제 동작과 어긋나지 않는다.
+    // 안에서만 증가하므로 가이드 탭 통계가 항상 실제 동작과 어긋나지 않는다. answerApprovedByDesigner는
+    // "설계사가 실제로 답변승인을 눌렀는지"를 상태값과 무관하게 남겨, 아래 제원 변경 제안(빠른 처리)으로
+    // 답변승인 단계를 건너뛴 질의까지 잘못 집계되지 않게 한다.
+    if (approve) patch.answerApprovedByDesigner = true;
     if (!approve) { patch.requeryCount = (t.requeryCount || 0) + 1; patch.answerRequeryCount = (t.answerRequeryCount || 0) + 1; }
     return store.updateThread(threadId, patch);
   }
@@ -1315,20 +1356,22 @@
     answerRequery: ["재질의", "(다시 답변 요청)"],
     valuePropose: ["아니오 → 값 제안"],
     finalRequery: ["재질의", "(다시 제안 요청)"],
+    fastPropose: ["기술팀 값 제안", "(빠른 처리)"],
   };
   var EDGE_LABEL_DESC = {
     teamAnswer: "②→④ 화살표: 서술형 답변 등록", autoConvert: "①→④ 화살표: 특이사항→수동 전환",
     answerRequery: "④→④ 되돌이 화살표: 답변 재질의", valuePropose: "⑤→⑦ 화살표: 값 제안",
-    finalRequery: "⑤→⑤ 되돌이 화살표: 제안 재질의",
+    finalRequery: "⑤→⑤ 되돌이 화살표: 제안 재질의", fastPropose: "②→⑦ 화살표: 답변 단계 건너뛰고 곧장 값 제안(빠른 처리)",
   };
   var DEFAULT_GUIDE_STEPS = [
     { id: "s1", num: "①", role: "시스템", title: "AUTO 질의 자동 생성", desc: "검증 규칙(성상별 유량 OVER, 성상명 표준화 등)을 위반한 항목을 시스템이 스스로 찾아 AS-IS→TO-BE 값을 계산하고 대공정 담당 기술팀 앞으로 질의를 일괄 생성합니다. 설계사 개입 없이 바로 기술팀 확인 단계로 넘어갑니다." },
     { id: "s2", num: "①→③", role: "기술팀", title: "AUTO 질의 확인 (특이사항 없음)", desc: "\"확인\" 버튼 한 번으로 TO-BE 값이 그 자리에서 제원 DB에 반영되고 질의가 즉시 해결됩니다. 본인이 담당하는 대공정의 질의만 확인할 수 있습니다." },
     { id: "s3", num: "①→④", role: "기술팀", title: "AUTO 질의에 특이사항 있음 → 수동 전환", desc: "제안된 값이 틀렸거나 추가 논의가 필요하면 \"특이사항 있음\"을 누르고 사유를 입력합니다. 같은 대상·필드를 그대로 들고 수동 질의로 자동 전환되며, 이미 사유를 설명했으므로 설계사 검토(④→답변완료) 단계에서 바로 시작합니다." },
     { id: "s4", num: "②", role: "설계사", title: "MANUAL 질의 등록", desc: "제원표의 특정 항목에 대해 공종 담당 설계사가 직접 서술형으로 질문을 올립니다(제원표 상세의 \"검증 결과\" 탭에서도 등록 가능). PJT·대공정·필드가 함께 기록됩니다." },
-    { id: "s5", num: "②→④", role: "기술팀", title: "서술형 답변 등록", desc: "대공정 담당 기술팀이 질의 내용을 확인하고 서술형으로 답변을 작성합니다. 등록하면 \"답변완료(TECH_ANSWERED)\" 상태로 넘어가 설계사 검토를 기다립니다." },
+    { id: "s5", num: "②→④", role: "기술팀", title: "AS-IS 값 승인 또는 서술형 답변", desc: "AS-IS 값 자체가 맞으면 \"AS-IS 값 승인\" 버튼 한 번으로, 또는 직접 서술형으로 답변을 작성해 등록합니다. 등록하면 \"답변완료(TECH_ANSWERED)\" 상태로 넘어가 설계사 검토를 기다립니다. 성상명·자재명은 표준 목록에서만 고를 수 있는 콤보박스로 되어 있습니다." },
+    { id: "s5b", num: "②→⑦", role: "기술팀", title: "MANUAL 질의에서 곧장 제원 변경 제안 (빠른 처리)", desc: "값을 바로 고쳐야 하는 게 명확하면 답변완료·답변승인 단계를 거치지 않고 \"제원 변경 제안\"으로 즉시 값을 제안할 수 있습니다. 제안하면 바로 \"값 제안됨\" 상태로 넘어가 설계사 최종확인만 받으면 되고, 이때도 성상명·자재명은 표준 목록 콤보박스에서만 고를 수 있습니다." },
     { id: "s6", num: "④→⑤", role: "설계사", title: "답변 검토", desc: "기술팀 답변에 특이사항이 없으면 \"답변승인\"으로 넘겨 기술팀이 제원을 변경(또는 확인)하게 합니다. 특이사항이 있으면 \"재질의\"로 반려해 기술팀이 다시 답변하도록 되돌립니다(재질의 횟수가 1 늘어납니다)." },
-    { id: "s7", num: "⑤→⑥/⑦", role: "기술팀", title: "값 확인 또는 제원 변경 제안", desc: "AS-IS 값 자체가 이미 맞다면 \"확인\" 버튼 한 번으로 값 변경 없이 바로 종결됩니다. 실제로 값을 고쳐야 한다면 \"값 변경이 필요합니다\"를 눌러 필드를 수정해 제안하고, 검증 규칙(유량 OVER, 성상명 표준화 등)을 통과해야 등록됩니다." },
+    { id: "s7", num: "⑤→⑥/⑦", role: "기술팀", title: "값 확인 또는 제원 변경 제안", desc: "AS-IS 값 자체가 이미 맞다면 \"확인\" 버튼 한 번으로 값 변경 없이 바로 종결됩니다. 실제로 값을 고쳐야 한다면 \"값 변경이 필요합니다\"를 눌러 필드를 수정해 제안하고, 검증 규칙(유량 OVER, 성상명 표준화 등)을 통과해야 등록됩니다. 성상명·자재명 필드는 표준 목록에서만 고를 수 있는 콤보박스입니다." },
     { id: "s8", num: "⑦→⑧", role: "설계사", title: "최종 확인", desc: "제안된 값이 맞으면 \"최종 확인\"으로 그 자리에서 제원 DB에 반영되고 종결됩니다 — 수정 이력이 남고 해당 건설코드의 버전이 하나 올라갑니다. 값이 틀렸으면 \"재질의\"로 반려해 기술팀이 다시 제안하게 합니다." },
   ];
   function effectiveNodeLabels() {
@@ -1349,7 +1392,9 @@
     var auto = state.threads.filter(function (t) { return t.queryType === "AUTO"; });
     var techAnswerMsgCount = 0;
     manual.forEach(function (t) { (t.messages || []).forEach(function (m) { if (m.role === "ANSWER") techAnswerMsgCount++; }); });
-    var answerApprovedOrBeyond = manual.filter(function (t) { return ["ANSWER_APPROVED", "VALUE_PROPOSED", "RESOLVED"].indexOf(t.status) !== -1; }).length;
+    // 현재 상태(ANSWER_APPROVED 이상)로 추정하지 않고 decideAnswer(true)가 실제로 찍어 둔 플래그를 쓴다 —
+    // "MANUAL 질의에서 곧장 제원 변경 제안"으로 답변승인 단계를 건너뛴 질의까지 잘못 세지 않기 위해서다.
+    var answerApprovedOrBeyond = manual.filter(function (t) { return t.answerApprovedByDesigner; }).length;
     var answerRequeryTotal = manual.reduce(function (a, t) { return a + (t.answerRequeryCount || 0); }, 0);
     var finalRequeryTotal = manual.reduce(function (a, t) { return a + (t.finalRequeryCount || 0); }, 0);
     var noChangeResolvedCount = manual.filter(function (t) { return t.status === "RESOLVED" && t.resolvedVia === "NO_CHANGE"; }).length;
@@ -1428,6 +1473,7 @@
         '<marker id="flowArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--ink-faint)"/></marker>' +
         '<marker id="flowArrowOk" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--ok)"/></marker>' +
         '<marker id="flowArrowWarn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--warn)"/></marker>' +
+        '<marker id="flowArrowAccent" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--accent)"/></marker>' +
       "</defs>"
     );
     // 시작 — 두 갈래 진입점 (자동 감지 / 설계사 등록)
@@ -1436,6 +1482,10 @@
     p.push(arrow("300,92 300,140"));
     p.push(arrow("740,92 740,335 650,335 650,366"));
     p.push(label(700, 335, edgeLabels.teamAnswer, { w: 100 }));
+    // 신규 단축 경로: MANUAL 질의(OPEN)에서 답변완료·답변승인 단계를 건너뛰고 곧장 값 제안됨으로
+    // (기술팀이 즉시 제원 변경을 제안 → 설계사 최종확인만 남는다)
+    p.push(arrow("850,60 1000,60 1000,1100 650,1100", { color: "var(--accent)", marker: "flowArrowAccent" }));
+    p.push(label(1000, 580, edgeLabels.fastPropose, { color: "var(--accent-strong)", w: 130 }));
     // AUTO 확인 분기
     p.push(diamond(300, 220, 125, 80, nodeLabels.D1, "tech"));
     p.push(arrow("175,220 140,220 140,366", { color: "var(--ok)", marker: "flowArrowOk" }));
@@ -1474,7 +1524,7 @@
     // 최종 종결
     p.push(rect(520, 1460, 340, 80, nodeLabels.TFINAL, "done"));
     return (
-      '<svg viewBox="0 0 1040 1530" role="img" aria-label="제원 질의응답 처리 흐름: 자동/수동 질의가 담당 기술팀과 설계사 사이를 오가며 미답변에서 해결됨까지 거치는 모든 상태와 재질의 루프를 보여준다">' +
+      '<svg viewBox="0 0 1100 1530" role="img" aria-label="제원 질의응답 처리 흐름: 자동/수동 질의가 담당 기술팀과 설계사 사이를 오가며 미답변에서 해결됨까지 거치는 모든 상태와 재질의 루프, 그리고 답변 단계를 건너뛰는 빠른 제원 변경 경로를 보여준다">' +
       p.join("") +
       "</svg>"
     );
@@ -1574,7 +1624,7 @@
           "</div>" +
           (state.guideSaveError ? '<p class="error-text">' + esc(state.guideSaveError) + "</p>" : "") +
           '<figure style="margin:10px 0 0"><div class="flow-wrap">' + buildFlowSvg(nodeLabels, edgeLabels) + "</div>" +
-            '<figcaption class="flow-caption">① AUTO 질의부터 ⑧ 최종 DB 반영까지 — 실선 화살표는 다음 단계로 진행, 점선(주황) 화살표는 반려로 인한 재질의 되돌아가기를 뜻합니다.</figcaption>' +
+            '<figcaption class="flow-caption">① AUTO 질의부터 ⑧ 최종 DB 반영까지 — 실선 화살표는 다음 단계로 진행, 굵은 청록 화살표(②→⑦)는 답변 단계를 건너뛰고 곧장 값을 제안하는 빠른 경로, 점선(주황) 화살표는 반려로 인한 재질의 되돌아가기를 뜻합니다.</figcaption>' +
           "</figure>" +
           '<div class="flow-legend">' +
             '<div class="item"><span class="sw" style="background:var(--accent)"></span>기술팀이 처리</div>' +
@@ -1923,20 +1973,25 @@
       var isPrimary = f === t.fieldLabel;
       var info = fieldEditInfo(tg.sheetCode, tg.itemIdx, f);
       var val = item[f] == null ? "" : item[f];
+      var stdOptions = standardOptionsFor(item.category, f);
+      var control = stdOptions
+        ? standardSelectHtml(f, stdOptions, val, "chg-input")
+        : '<input class="text chg-input" data-field="' + esc(f) + '" data-orig="' + esc(val) + '" value="' + esc(val) + '">';
       return (
         '<div class="field" style="min-width:150px">' +
           '<label class="field-label">' + esc(f) +
             (isPrimary ? ' <span class="chip warn">질의 대상</span>' : "") +
+            (stdOptions ? ' <span class="chip neutral" title="표준 목록에서만 고를 수 있습니다">표준값</span>' : "") +
             (info.any ? ' <span class="chip neutral" style="cursor:help;border-bottom:1px dashed var(--warn)" title="' + esc(info.title) + '">수정이력 ' + info.count + "건</span>" : "") +
           "</label>" +
-          '<input class="text chg-input" data-field="' + esc(f) + '" data-orig="' + esc(val) + '" value="' + esc(val) + '">' +
+          control +
         "</div>"
       );
     }).join("");
     return (
       '<div class="thread-form">' +
         '<p class="auto-note" style="margin:0 0 6px">건설코드 ' + esc(tg.sheetCode) + (item.설비모듈 ? " · 설비모듈 " + esc(item.설비모듈) : "") + ' · ' + esc(item.category || "") + ' 항목입니다. 값을 바꿀 필드만 고쳐서 제안하세요 — ' +
-          "저장 전 검증 규칙(성상별 유량 OVER, 성상명 표준화 등)을 통과해야 합니다. 필드 라벨 옆 \"수정이력\"에 커서를 대면 이전 변경 내역이 보입니다.</p>" +
+          "저장 전 검증 규칙(성상별 유량 OVER, 성상명 표준화 등)을 통과해야 합니다. 성상명·자재명은 표준 목록에서만 고를 수 있도록 콤보박스로 되어 있습니다. 필드 라벨 옆 \"수정이력\"에 커서를 대면 이전 변경 내역이 보입니다.</p>" +
         '<div class="filter-bar">' + rows + "</div>" +
         '<div class="row" style="margin-top:8px"><button class="btn primary small" data-submit-change="' + t.id + '">값 제안</button></div>' +
       "</div>"
@@ -1944,13 +1999,37 @@
   }
   // ---- AUTO 질의가 여러 건설코드를 한꺼번에 묶어 수동 질의로 전환된 경우: 같은 필드 값을 대상 전체에 동일하게 제안 ----
   function renderBulkProposeForm(t) {
+    var tg0 = t.targets[0];
+    var item0 = ((state.sheets[tg0.sheetCode] || {}).items || [])[tg0.itemIdx];
+    var stdOptions = item0 ? standardOptionsFor(item0.category, t.fieldLabel) : null;
+    var control = stdOptions
+      ? '<select class="text" id="proposeValue">' + stdOptions.map(function (o) { return '<option value="' + esc(o) + '">' + esc(o) + "</option>"; }).join("") + "</select>"
+      : '<input class="text" id="proposeValue">';
     return (
       '<div class="thread-form">' +
-        '<label class="field-label">새 값 제안 — ' + esc(t.fieldLabel) + " (대상 " + t.targets.length + "건 전체에 동일하게 적용됩니다)</label>" +
-        '<input class="text" id="proposeValue">' +
+        '<label class="field-label">새 값 제안 — ' + esc(t.fieldLabel) + " (대상 " + t.targets.length + "건 전체에 동일하게 적용됩니다)" + (stdOptions ? " · 표준 목록에서 선택" : "") + "</label>" +
+        control +
         '<div class="row" style="margin-top:6px"><button class="btn primary small" data-propose="' + t.id + '">값 제안</button></div>' +
       "</div>"
     );
+  }
+  // ---- 최초 수동 질의(OPEN) 단계 화면: AS-IS 값이 맞으면 버튼 한 번으로 답변완료 처리하고, 값을
+  // 바로 고쳐야 한다면 같은 화면에서 제원 변경을 제안해 답변완료·답변승인 두 단계를 건너뛰고 곧장
+  // 설계사 최종확인만 받도록 한다(값을 바로 고칠 필요는 없지만 설명이 필요할 때는 서술형 답변도 그대로
+  // 쓸 수 있다). 여기서 제안한 값도 설계사가 한 번은 반드시 최종확인해야 DB에 반영된다. ----
+  function renderOpenStageActions(t) {
+    var changeOpen = state.changeFormFor === t.id;
+    var html = (
+      '<div class="btn-row">' +
+        '<button class="btn primary" data-approve-asis="' + t.id + '">AS-IS 값 승인 (특이사항 없음)</button>' +
+        (changeOpen
+          ? '<button class="btn small" data-cancel-change-form="1">제원 변경 취소</button>'
+          : '<button class="btn" data-open-change-form="' + t.id + '">제원 변경 제안 (설계사에게 값 제안)</button>') +
+      "</div>"
+    );
+    if (changeOpen) html += (t.targets.length === 1 ? renderChangeForm(t) : renderBulkProposeForm(t));
+    html += '<div class="thread-form" style="margin-top:14px"><label class="field-label">또는 서술형으로 답변</label><textarea rows="3" id="answerText"></textarea><button class="btn small" data-submit-answer="' + t.id + '">답변 등록</button></div>';
+    return html;
   }
   // ---- 답변승인(ANSWER_APPROVED) 단계 화면: AS-IS 값이 이미 맞으면 기술팀 확인 한 번으로 바로 종결,
   // 값을 바꿔야 할 때만 아래 제원 변경 폼을 펼친다. (예전처럼 필드 전부를 보여주는 편집 폼이 기본으로
@@ -2004,7 +2083,7 @@
       }
     } else if (t.queryType === "MANUAL" && t.status === "OPEN") {
       actionHtml = (isTech || isAdmin)
-        ? '<div class="thread-form"><label class="field-label">서술형 답변</label><textarea rows="3" id="answerText"></textarea><button class="btn primary" data-submit-answer="' + t.id + '">답변 등록</button></div>'
+        ? renderOpenStageActions(t)
         : '<p class="gate-note">이 대공정 담당 기술팀만 답변할 수 있습니다.</p>';
     } else if (t.queryType === "MANUAL" && t.status === "TECH_ANSWERED") {
       actionHtml = (isDesigner || isAdmin)
@@ -2058,6 +2137,9 @@
           render();
         });
       };
+    });
+    Array.prototype.forEach.call(main.querySelectorAll("[data-approve-asis]"), function (b) {
+      b.onclick = function () { b.disabled = true; approveAsIsAnswer(b.dataset.approveAsis).then(render); };
     });
     Array.prototype.forEach.call(main.querySelectorAll("[data-confirm-nochange]"), function (b) {
       b.onclick = function () {
