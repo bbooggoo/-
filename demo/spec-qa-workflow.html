@@ -357,6 +357,21 @@
   };
   var OPEN_STATUSES = ["OPEN", "TECH_ANSWERED", "ANSWER_APPROVED", "VALUE_PROPOSED"];
 
+  // 질의응답 탭 필터 — 지금 기술팀이 처리해야 할 조치가 무엇인지 기준으로 분류한다.
+  // (설계사 차례인 TECH_ANSWERED/VALUE_PROPOSED, 이미 종결된 RESOLVED/REJECTED 는 어느 분류에도 속하지 않는다.)
+  var TECH_ACTION_LABEL = {
+    SPEC_CHANGE: "제원DB수정이 필요한 항목",
+    NARRATIVE_ANSWER: "서술형 답변 필요한 항목",
+    OTHER_CONFIRM: "그 외 확인필요한 항목",
+  };
+  var TECH_ACTION_SHORT = { SPEC_CHANGE: "제원수정 필요", NARRATIVE_ANSWER: "서술형 답변 필요", OTHER_CONFIRM: "확인 필요" };
+  function techActionCategory(t) {
+    if (t.queryType === "MANUAL" && t.status === "ANSWER_APPROVED") return "SPEC_CHANGE"; // 설계사 승인 완료 — 기술팀이 제원 변경 폼을 제출해야 함
+    if (t.queryType === "MANUAL" && t.status === "OPEN") return "NARRATIVE_ANSWER"; // 설계사 질의 등록 — 기술팀의 서술형 회신 대기
+    if (t.queryType === "AUTO" && t.status === "OPEN") return "OTHER_CONFIRM"; // 자동 질의 — 기술팀의 확인/특이사항 클릭 대기
+    return null;
+  }
+
   // ===================================================================
   // 데모 시드 데이터 (실제 백엔드 검증값과 동일: PD000101 은 유량 OVER(O2)와
   // 비표준 표기(질소) 를 하나씩 포함해 자동/수동 질의 두 트랙을 바로 볼 수 있음)
@@ -560,7 +575,7 @@
     corrections: [],
     dashFilterMp: "", dashFilterStatus: "",
     summaryFilterMp: "", summaryAutoApplied: false,
-    qFilterMp: "", qFilterDiscipline: "", qFilterType: "", qOpenOnly: false, qRequeryOnly: false, qAutoApplied: false,
+    qFilterMp: "", qFilterDiscipline: "", qFilterType: "", qTechAction: "", qOpenOnly: false, qRequeryOnly: false, qAutoApplied: false,
     selectedThreadId: null,
     selectedSheet: null,
     activeTab: "items",
@@ -1376,6 +1391,7 @@
       if (state.qFilterMp && t.majorProcess !== state.qFilterMp) return false;
       if (state.qFilterDiscipline && t.discipline !== state.qFilterDiscipline) return false;
       if (state.qFilterType && t.queryType !== state.qFilterType) return false;
+      if (state.qTechAction && techActionCategory(t) !== state.qTechAction) return false;
       if (state.qOpenOnly && OPEN_STATUSES.indexOf(t.status) === -1) return false;
       if (state.qRequeryOnly && !(t.requeryCount > 0)) return false;
       return true;
@@ -1398,6 +1414,9 @@
             '<div class="field"><label class="field-label">대공정</label><select id="qMp"><option value="">전체</option>' + MAJOR_PROCESSES.map(function (mp) { return '<option value="' + mp + '"' + (state.qFilterMp === mp ? " selected" : "") + ">" + mp + "</option>"; }).join("") + "</select></div>" +
             '<div class="field"><label class="field-label">공종</label><select id="qDisc"><option value="">전체</option>' + DISCIPLINES.map(function (d) { return '<option value="' + d.code + '"' + (state.qFilterDiscipline === d.code ? " selected" : "") + ">" + d.name + "</option>"; }).join("") + "</select></div>" +
             '<div class="field"><label class="field-label">질의 유형</label><select id="qType"><option value="">전체</option><option value="AUTO"' + (state.qFilterType === "AUTO" ? " selected" : "") + '>자동</option><option value="MANUAL"' + (state.qFilterType === "MANUAL" ? " selected" : "") + ">수동</option></select></div>" +
+            '<div class="field"><label class="field-label">기술팀 확인 유형</label><select id="qTechAction"><option value="">전체</option>' +
+              Object.keys(TECH_ACTION_LABEL).map(function (k) { return '<option value="' + k + '"' + (state.qTechAction === k ? " selected" : "") + ">" + TECH_ACTION_LABEL[k] + "</option>"; }).join("") +
+            "</select></div>" +
             '<div class="field"><div class="checkbox-row"><input type="checkbox" id="qOpenOnly"' + (state.qOpenOnly ? " checked" : "") + '><label for="qOpenOnly" style="margin:0">미해결만 보기</label></div></div>' +
             '<div class="field"><div class="checkbox-row"><input type="checkbox" id="qRequeryOnly"' + (state.qRequeryOnly ? " checked" : "") + '><label for="qRequeryOnly" style="margin:0">재질의 있는 것만 보기</label></div></div>' +
           "</div>" +
@@ -1420,6 +1439,7 @@
     document.getElementById("qMp").onchange = function (e) { state.qFilterMp = e.target.value; state.qAutoApplied = false; render(); };
     document.getElementById("qDisc").onchange = function (e) { state.qFilterDiscipline = e.target.value; state.qAutoApplied = false; render(); };
     document.getElementById("qType").onchange = function (e) { state.qFilterType = e.target.value; render(); };
+    document.getElementById("qTechAction").onchange = function (e) { state.qTechAction = e.target.value; render(); };
     document.getElementById("qOpenOnly").onchange = function (e) { state.qOpenOnly = e.target.checked; state.qAutoApplied = false; render(); };
     document.getElementById("qRequeryOnly").onchange = function (e) { state.qRequeryOnly = e.target.checked; render(); };
     Array.prototype.forEach.call(main.querySelectorAll("[data-thread]"), function (el) {
@@ -1429,10 +1449,12 @@
   }
   function renderThreadCard(t) {
     var active = state.selectedThreadId === t.id;
+    var techCat = techActionCategory(t);
     return (
       '<div class="thread-card' + (active ? " active" : "") + '" data-thread="' + t.id + '">' +
         '<span class="chip ' + QA_STATUS_CHIP[t.status] + '">' + QA_STATUS_LABEL[t.status] + "</span> " +
         '<span class="chip type-' + t.queryType + '">' + (t.queryType === "AUTO" ? "자동" : "수동") + "</span>" +
+        (techCat ? ' <span class="chip neutral" title="' + esc(TECH_ACTION_LABEL[techCat]) + '">' + TECH_ACTION_SHORT[techCat] + "</span>" : "") +
         (t.requeryCount > 0 ? ' <span class="chip warn">재질의 ' + t.requeryCount + "회</span>" : "") +
         '<div class="t-title">' + esc(t.title) + "</div>" +
         '<div class="t-meta">' + (t.pjt ? esc(t.pjt) + " · " : "") + esc(t.majorProcess) + (t.discipline ? " · " + disciplineName(t.discipline) : "") + " · 대상 " + (t.targets || []).length + "건" + (t.toBeValue != null ? " · TO-BE: " + esc(t.toBeValue) : "") + "</div>" +
