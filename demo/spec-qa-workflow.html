@@ -575,7 +575,7 @@
     corrections: [],
     dashFilterMp: "", dashFilterStatus: "",
     summaryFilterMp: "", summaryAutoApplied: false,
-    qFilterMp: "", qFilterDiscipline: "", qFilterType: "", qTechAction: "", qOpenOnly: false, qRequeryOnly: false, qAutoApplied: false,
+    qFilterMp: "", qFilterDiscipline: "", qFilterType: "", qTechAction: "", qSearch: "", qOpenOnly: false, qRequeryOnly: false, qAutoApplied: false,
     selectedThreadId: null,
     selectedSheet: null,
     activeTab: "items",
@@ -603,6 +603,30 @@
     return o.name + " · " + ROLE_LABEL[o.role] + (scope ? " (" + scope + ")" : "");
   }
   function threadById(id) { return state.threads.filter(function (t) { return t.id === id; })[0] || null; }
+  // ---- 질의 대상 항목의 설비모듈 조회: 질의응답 탭에서 건설코드와 함께 보여준다 ----
+  function equipModuleFor(sheetCode, itemIdx) {
+    var it = ((state.sheets[sheetCode] || {}).items || [])[itemIdx];
+    return it && it.설비모듈 ? it.설비모듈 : "";
+  }
+  // 질의 카드에 "건설코드 · 설비모듈" 요약을 붙인다 (대상이 여러 건이면 첫 건 + 나머지 건수)
+  function targetSummary(t) {
+    var targets = t.targets || [];
+    if (!targets.length) return "대상 없음";
+    var tg0 = targets[0];
+    var mod0 = equipModuleFor(tg0.sheetCode, tg0.itemIdx);
+    var bit = esc(tg0.sheetCode) + (mod0 ? " · " + esc(mod0) : "");
+    return targets.length > 1 ? bit + " 외 " + (targets.length - 1) + "건" : bit;
+  }
+  // 질의응답 탭 검색창이 훑는 텍스트: 건설코드/설비모듈/필드/제목/대공정 등을 모두 합쳐 부분일치로 찾는다
+  function threadSearchText(t) {
+    var bits = [t.title, t.fieldLabel, t.majorProcess, t.pjt, t.asIsValue, t.toBeValue, t.question];
+    (t.targets || []).forEach(function (tg) {
+      bits.push(tg.sheetCode);
+      var mod = equipModuleFor(tg.sheetCode, tg.itemIdx);
+      if (mod) bits.push(mod);
+    });
+    return bits.filter(Boolean).join(" ").toLowerCase();
+  }
 
   // ---- 제원 항목의 필드별 수정 이력 조회: 제원 DB/제원표 항목 화면의 셀음영·호버 팝업에 쓴다 ----
   function correctionsFor(sheetCode, itemIdx, field) {
@@ -1394,6 +1418,7 @@
       if (state.qTechAction && techActionCategory(t) !== state.qTechAction) return false;
       if (state.qOpenOnly && OPEN_STATUSES.indexOf(t.status) === -1) return false;
       if (state.qRequeryOnly && !(t.requeryCount > 0)) return false;
+      if (state.qSearch && threadSearchText(t).indexOf(state.qSearch.trim().toLowerCase()) === -1) return false;
       return true;
     }).sort(function (a, b) { return (b.updatedAt || "").localeCompare(a.updatedAt || ""); });
 
@@ -1419,6 +1444,7 @@
             "</select></div>" +
             '<div class="field"><div class="checkbox-row"><input type="checkbox" id="qOpenOnly"' + (state.qOpenOnly ? " checked" : "") + '><label for="qOpenOnly" style="margin:0">미해결만 보기</label></div></div>' +
             '<div class="field"><div class="checkbox-row"><input type="checkbox" id="qRequeryOnly"' + (state.qRequeryOnly ? " checked" : "") + '><label for="qRequeryOnly" style="margin:0">재질의 있는 것만 보기</label></div></div>' +
+            '<div class="field grow"><label class="field-label">검색 (건설코드/설비모듈/필드/질의제목)</label><input class="text" id="qSearch" value="' + esc(state.qSearch) + '" placeholder="예: PD0001, SCRUBBER, 성상명"></div>' +
           "</div>" +
         "</div>" +
         '<div class="queries-grid">' +
@@ -1442,6 +1468,7 @@
     document.getElementById("qTechAction").onchange = function (e) { state.qTechAction = e.target.value; render(); };
     document.getElementById("qOpenOnly").onchange = function (e) { state.qOpenOnly = e.target.checked; state.qAutoApplied = false; render(); };
     document.getElementById("qRequeryOnly").onchange = function (e) { state.qRequeryOnly = e.target.checked; render(); };
+    document.getElementById("qSearch").onchange = function (e) { state.qSearch = e.target.value; render(); };
     Array.prototype.forEach.call(main.querySelectorAll("[data-thread]"), function (el) {
       el.addEventListener("click", function () { state.selectedThreadId = el.dataset.thread; render(); });
     });
@@ -1457,7 +1484,7 @@
         (techCat ? ' <span class="chip neutral" title="' + esc(TECH_ACTION_LABEL[techCat]) + '">' + TECH_ACTION_SHORT[techCat] + "</span>" : "") +
         (t.requeryCount > 0 ? ' <span class="chip warn">재질의 ' + t.requeryCount + "회</span>" : "") +
         '<div class="t-title">' + esc(t.title) + "</div>" +
-        '<div class="t-meta">' + (t.pjt ? esc(t.pjt) + " · " : "") + esc(t.majorProcess) + (t.discipline ? " · " + disciplineName(t.discipline) : "") + " · 대상 " + (t.targets || []).length + "건" + (t.toBeValue != null ? " · TO-BE: " + esc(t.toBeValue) : "") + "</div>" +
+        '<div class="t-meta">' + (t.pjt ? esc(t.pjt) + " · " : "") + esc(t.majorProcess) + (t.discipline ? " · " + disciplineName(t.discipline) : "") + " · " + targetSummary(t) + (t.toBeValue != null ? " · TO-BE: " + esc(t.toBeValue) : "") + "</div>" +
       "</div>"
     );
   }
@@ -1484,7 +1511,7 @@
     }).join("");
     return (
       '<div class="thread-form">' +
-        '<p class="auto-note" style="margin:0 0 6px">건설코드 ' + esc(tg.sheetCode) + ' · ' + esc(item.category || "") + ' 항목입니다. 값을 바꿀 필드만 고쳐서 제안하세요 — ' +
+        '<p class="auto-note" style="margin:0 0 6px">건설코드 ' + esc(tg.sheetCode) + (item.설비모듈 ? " · 설비모듈 " + esc(item.설비모듈) : "") + ' · ' + esc(item.category || "") + ' 항목입니다. 값을 바꿀 필드만 고쳐서 제안하세요 — ' +
           "저장 전 검증 규칙(성상별 유량 OVER, 성상명 표준화 등)을 통과해야 합니다. 필드 라벨 옆 \"수정이력\"에 커서를 대면 이전 변경 내역이 보입니다.</p>" +
         '<div class="filter-bar">' + rows + "</div>" +
         '<div class="row" style="margin-top:8px"><button class="btn primary small" data-submit-change="' + t.id + '">값 제안</button></div>' +
@@ -1513,12 +1540,12 @@
       var tg0 = t.targets[0];
       var itemsNow = (state.sheets[tg0.sheetCode] || {}).items || [];
       targetRows = t.proposedChanges.map(function (ch) {
-        return "<tr><td>" + esc(tg0.sheetCode) + "</td><td>" + esc(ch.field) + "</td><td>" + esc((itemsNow[tg0.itemIdx] || {})[ch.field]) + '</td><td class="tobe">' + esc(ch.newValue) + "</td></tr>";
+        return "<tr><td>" + esc(tg0.sheetCode) + "</td><td>" + esc(equipModuleFor(tg0.sheetCode, tg0.itemIdx)) + "</td><td>" + esc(ch.field) + "</td><td>" + esc((itemsNow[tg0.itemIdx] || {})[ch.field]) + '</td><td class="tobe">' + esc(ch.newValue) + "</td></tr>";
       }).join("");
     } else {
       targetRows = (t.targets || []).map(function (tg) {
         var it = (state.sheets[tg.sheetCode] || {}).items || [];
-        return "<tr><td>" + esc(tg.sheetCode) + "</td><td>" + esc(tg.field) + "</td><td>" + esc((it[tg.itemIdx] || {})[tg.field]) + '</td><td class="tobe">' + esc(t.toBeValue == null ? "-" : t.toBeValue) + "</td></tr>";
+        return "<tr><td>" + esc(tg.sheetCode) + "</td><td>" + esc(equipModuleFor(tg.sheetCode, tg.itemIdx)) + "</td><td>" + esc(tg.field) + "</td><td>" + esc((it[tg.itemIdx] || {})[tg.field]) + '</td><td class="tobe">' + esc(t.toBeValue == null ? "-" : t.toBeValue) + "</td></tr>";
       }).join("");
     }
     var messages = (t.messages || []).map(function (m) {
@@ -1561,7 +1588,7 @@
       '<p style="font-size:12.5px;color:var(--ink-muted);margin:0 0 12px">' + (t.queryType === "AUTO" ? "자동 질의" : "수동 질의") + " · " + esc(t.majorProcess) +
         (t.discipline ? " · " + disciplineName(t.discipline) : "") + ' · <span class="chip ' + QA_STATUS_CHIP[t.status] + '">' + QA_STATUS_LABEL[t.status] + "</span>" +
         (t.requeryCount > 0 ? ' <span class="chip warn">재질의 ' + t.requeryCount + "회</span>" : "") + "</p>" +
-      '<div style="overflow-x:auto"><table class="target-table"><thead><tr><th>건설코드</th><th>필드</th><th>AS-IS</th><th>TO-BE</th></tr></thead><tbody>' + targetRows + "</tbody></table></div>" +
+      '<div style="overflow-x:auto"><table class="target-table"><thead><tr><th>건설코드</th><th>설비모듈</th><th>필드</th><th>AS-IS</th><th>TO-BE</th></tr></thead><tbody>' + targetRows + "</tbody></table></div>" +
       (t.question ? '<div class="msg-bubble QUESTION"><div class="m-meta">' + esc(t.createdBy) + " · " + fmtTime(t.createdAt) + "</div>" + esc(t.question) + "</div>" : "") +
       '<div id="threadMsgArea" style="max-height:200px;overflow-y:auto;margin:8px 0">' + messages + "</div>" +
       '<div id="threadErrorArea"></div>' +
