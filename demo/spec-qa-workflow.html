@@ -247,6 +247,21 @@
   .guide-step .gs-num { flex: none; font-family: var(--mono); font-size: 11px; color: var(--ink-faint); min-width: 18px; padding-top: 2px; }
   .guide-step b { font-size: 13px; }
   .guide-step p { margin: 3px 0 0; font-size: 12.5px; color: var(--ink-muted); }
+  .stat-list { width: 100%; font-size: 12.5px; border-collapse: collapse; }
+  .stat-list td { padding: 7px 4px; border-bottom: 1px solid var(--border); }
+  .stat-list td:last-child { text-align: right; font-family: var(--mono); font-weight: 700; color: var(--ink); white-space: nowrap; padding-left: 10px; }
+  .stat-list tr:last-child td { border-bottom: none; }
+  .stat-list tr.total td { font-weight: 700; border-top: 1px dashed var(--border-strong); border-bottom: none; padding-top: 9px; }
+  .stat-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  @media (max-width: 700px) { .stat-cols { grid-template-columns: 1fr; } }
+  .guide-edit-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; margin-top: 10px; }
+  .guide-edit-grid textarea { min-height: 44px; }
+  .guide-step-edit { border: 1px solid var(--border-strong); border-radius: 8px; padding: 10px; margin-bottom: 8px; background: var(--surface); }
+  .guide-step-edit .row1 { display: flex; gap: 8px; margin-bottom: 6px; }
+  .guide-step-edit .row1 input.gse-num { width: 64px; flex: none; }
+  .guide-step-edit .row1 select.gse-role { width: 90px; flex: none; }
+  .guide-step-edit .row1 input.gse-title { flex: 1; }
+  .guide-step-edit .row1 .gse-btn { flex: none; }
 
   /* ---------------- owners page ---------------- */
   .owner-table { width: 100%; font-size: 12.5px; }
@@ -601,6 +616,11 @@
     selectedPjt: "",
     autoRejectFor: null, // AUTO 질의를 "특이사항 있음"으로 전환할 때 사유 입력 폼을 보여줄 thread id
     changeFormFor: null, // 답변승인 단계에서 "값 변경이 필요합니다"를 눌러 제원 변경 폼을 펼친 thread id
+    guideConfig: null, // 업무 가이드 탭의 관리자 편집 내용(guide_config/main 문서) — 없으면 기본 문구를 그대로 쓴다
+    guideEditing: false, // 관리자가 "편집" 모드를 켰는지
+    guideDraft: null, // 편집 중인 초안(저장 전까지는 로컬에만 존재, 취소하면 버림)
+    guideSaving: false,
+    guideSaveError: null,
   };
 
   var store = null;
@@ -904,7 +924,10 @@
       status: approve ? "ANSWER_APPROVED" : "OPEN", updatedAt: nowIso(),
       messages: pushMessage(t, "COMMENT", approve ? "특이사항 없음으로 확인 — 기술팀이 제원 변경을 진행합니다." : "재질의가 필요합니다 — 다시 답변해 주세요."),
     };
-    if (!approve) patch.requeryCount = (t.requeryCount || 0) + 1;
+    // requeryCount(전체 재질의 누적)와 별개로, 업무 가이드 탭의 케이스별 집계가 "답변 단계에서의
+    // 재질의"만 따로 셀 수 있도록 answerRequeryCount도 함께 늘린다 — 이 필드들은 실제 처리 로직(이 함수)
+    // 안에서만 증가하므로 가이드 탭 통계가 항상 실제 동작과 어긋나지 않는다.
+    if (!approve) { patch.requeryCount = (t.requeryCount || 0) + 1; patch.answerRequeryCount = (t.answerRequeryCount || 0) + 1; }
     return store.updateThread(threadId, patch);
   }
   // 답변승인(ANSWER_APPROVED) 단계에서 AS-IS 값 자체가 이미 맞아 바꿀 값이 없을 때: 설계사가 이미 "특이사항
@@ -914,7 +937,9 @@
     var t = threadById(threadId);
     if (!t) return Promise.resolve();
     return store.updateThread(threadId, {
-      status: "RESOLVED", toBeValue: t.asIsValue, updatedAt: nowIso(),
+      // resolvedVia: "NO_CHANGE"로 표시해 두면 업무 가이드 탭이 "값 변경 없이 확인만으로 종결"과
+      // "실제로 값을 바꿔 종결"을 케이스별로 구분해 집계할 수 있다.
+      status: "RESOLVED", toBeValue: t.asIsValue, resolvedVia: "NO_CHANGE", updatedAt: nowIso(),
       messages: pushMessage(t, "COMMENT", "기술팀 확인 — AS-IS 값 그대로 확정되어 종결되었습니다 (변경 없음)."),
     });
   }
@@ -950,7 +975,8 @@
       status: approve ? "RESOLVED" : "ANSWER_APPROVED", updatedAt: nowIso(),
       messages: pushMessage(t, "COMMENT", approve ? "최종 승인. DB에 반영되었습니다." : "반려되었습니다 — 재질의가 필요합니다. 값을 다시 제안해 주세요."),
     };
-    if (!approve) patch.requeryCount = (t.requeryCount || 0) + 1;
+    if (!approve) { patch.requeryCount = (t.requeryCount || 0) + 1; patch.finalRequeryCount = (t.finalRequeryCount || 0) + 1; }
+    else patch.resolvedVia = "VALUE_CHANGE";
     var chain = store.updateThread(threadId, patch);
     if (approve) {
       chain = chain.then(function () {
@@ -1086,8 +1112,8 @@
   // 저장소: db 캐패빌리티 있으면 실시간 공유, 없으면 이 브라우저 세션 로컬 저장
   // ===================================================================
   function makeLocalStore() {
-    var owners = [], sheets = {}, threads = [], corrections = [];
-    var listeners = { owners: [], sheets: [], threads: [], corrections: [] };
+    var owners = [], sheets = {}, threads = [], corrections = [], guideConfig = null;
+    var listeners = { owners: [], sheets: [], threads: [], corrections: [], guideConfig: [] };
     function notify(key, getter) { listeners[key].forEach(function (cb) { cb(getter()); }); }
     function watch(key, cb, getter) {
       listeners[key].push(cb);
@@ -1101,10 +1127,12 @@
       addThread: function (data) { var doc = Object.assign({ id: uid() }, data); threads.push(doc); notify("threads", function () { return threads.slice(); }); return Promise.resolve(doc.id); },
       updateThread: function (id, patch) { var t = threads.filter(function (x) { return x.id === id; })[0]; if (t) Object.assign(t, patch); notify("threads", function () { return threads.slice(); }); return Promise.resolve(); },
       addCorrection: function (data) { corrections.push(Object.assign({ id: uid() }, data)); notify("corrections", function () { return corrections.slice(); }); return Promise.resolve(); },
+      setGuideConfig: function (doc) { guideConfig = Object.assign({}, doc); notify("guideConfig", function () { return guideConfig; }); return Promise.resolve(); },
       watchOwners: function (cb) { return watch("owners", cb, function () { return owners.slice(); }); },
       watchSheets: function (cb) { return watch("sheets", cb, function () { return Object.assign({}, sheets); }); },
       watchThreads: function (cb) { return watch("threads", cb, function () { return threads.slice(); }); },
       watchCorrections: function (cb) { return watch("corrections", cb, function () { return corrections.slice(); }); },
+      watchGuideConfig: function (cb) { return watch("guideConfig", cb, function () { return guideConfig; }); },
     };
   }
   function makeDbStore(dbNs) {
@@ -1112,6 +1140,7 @@
     var sheetsCol = dbNs.collection("spec_sheets");
     var threadsCol = dbNs.collection("qa_threads");
     var correctionsCol = dbNs.collection("corrections");
+    var guideConfigCol = dbNs.collection("guide_config");
     function watchCollection(col, cb) {
       return col.onSnapshot(function (snap) {
         cb(snap.docs.map(function (d) { return Object.assign({ id: d.id }, d.data()); }));
@@ -1124,6 +1153,7 @@
       addThread: function (data) { return threadsCol.add(data).then(function (ref) { return ref.id; }); },
       updateThread: function (id, patch) { return threadsCol.doc(id).update(patch); },
       addCorrection: function (data) { return correctionsCol.add(data); },
+      setGuideConfig: function (doc) { var body = Object.assign({}, doc); delete body.id; return guideConfigCol.doc("main").set(body); },
       watchOwners: function (cb) { return watchCollection(ownersCol, cb); },
       watchSheets: function (cb) {
         return watchCollection(sheetsCol, function (docs) {
@@ -1132,6 +1162,7 @@
       },
       watchThreads: function (cb) { return watchCollection(threadsCol, cb); },
       watchCorrections: function (cb) { return watchCollection(correctionsCol, cb); },
+      watchGuideConfig: function (cb) { return watchCollection(guideConfigCol, function (docs) { cb(docs[0] || null); }); },
     };
   }
   // ---- 건설코드별 버전 이력: spec_sheets 문서 안에 ver/versionHistory를 같이 저장해
@@ -1251,8 +1282,99 @@
   // 업무 가이드 — 제원 질의응답의 전체 처리 흐름을 플로우차트 하나로 보여준다. 신규 담당자가
   // 매뉴얼처럼 참고할 수 있도록 자동/수동, 재질의, 값 변경 없이 확인만으로 종결되는 경우까지
   // 실제 상태값(OPEN/TECH_ANSWERED/...)과 게이팅 규칙을 그대로 반영해 그렸다.
+  //
+  // 도형의 배치·연결(어느 상태에서 어느 상태로 가는지)은 실제 상태 머신(decideAuto/convertAutoToManual/
+  // submitTechAnswer/decideAnswer/confirmNoChange/proposeValue·proposeChanges/decideFinal)을 그대로
+  // 반영한 것이라 코드가 바뀌면 여기도 같이 손을 봐야 한다 — 그래서 도형 구조 자체는 고정하고, 문구
+  // (박스·화살표 라벨)와 아래 "단계별 설명" 목록만 관리자가 고쳐 쓸 수 있게 했다(guide_config/main 문서,
+  // db 캐패빌리티로 모든 뷰어에게 실시간 동기화). 관리자가 아무것도 편집하지 않았으면 기본 문구
+  // (DEFAULT_NODE_LABELS/DEFAULT_EDGE_LABELS/DEFAULT_GUIDE_STEPS)를 그대로 보여준다.
   // ===================================================================
-  var FLOW_SVG = (function () {
+  var DEFAULT_NODE_LABELS = {
+    A1: ["① AUTO 질의 생성", "미답변 (OPEN)"],
+    M1: ["② MANUAL 질의 생성", "미답변 (OPEN) · 설계사 등록"],
+    D1: ["기술팀 확인", "특이사항 없음?"],
+    TE1: ["③ 해결됨 (RESOLVED)", "TO-BE 값 자동 반영"],
+    MG1: ["④ 답변완료", "(TECH_ANSWERED)"],
+    D2: ["설계사 검토", "특이사항 없음?"],
+    N_APPROVED: ["⑤ 답변승인", "(ANSWER_APPROVED)"],
+    D3: ["기술팀 확인", "AS-IS 값 그대로", "맞는가?"],
+    TE2: ["⑥ 해결됨 (RESOLVED)", "확인만으로 즉시 종결"],
+    N_PROPOSED: ["⑦ 값 제안됨", "(VALUE_PROPOSED)"],
+    D4: ["설계사 최종확인", "제안값 승인?"],
+    TFINAL: ["⑧ 해결됨 (RESOLVED)", "DB 반영 · 수정이력 기록 · 버전+1"],
+  };
+  var NODE_LABEL_DESC = {
+    A1: "① AUTO 질의 박스", M1: "② MANUAL 질의 박스", D1: "기술팀 확인 분기(AUTO)", TE1: "③ AUTO 즉시종결 박스",
+    MG1: "④ 답변완료 박스", D2: "설계사 검토 분기", N_APPROVED: "⑤ 답변승인 박스", D3: "기술팀 확인 분기(값 유지?)",
+    TE2: "⑥ 확인만으로 종결 박스", N_PROPOSED: "⑦ 값 제안됨 박스", D4: "설계사 최종확인 분기", TFINAL: "⑧ 최종 종결 박스",
+  };
+  var DEFAULT_EDGE_LABELS = {
+    teamAnswer: ["기술팀 서술형", "답변 등록"],
+    autoConvert: ["아니오 → 수동 전환", "(TECH_ANSWERED로 시작)"],
+    answerRequery: ["재질의", "(다시 답변 요청)"],
+    valuePropose: ["아니오 → 값 제안"],
+    finalRequery: ["재질의", "(다시 제안 요청)"],
+  };
+  var EDGE_LABEL_DESC = {
+    teamAnswer: "②→④ 화살표: 서술형 답변 등록", autoConvert: "①→④ 화살표: 특이사항→수동 전환",
+    answerRequery: "④→④ 되돌이 화살표: 답변 재질의", valuePropose: "⑤→⑦ 화살표: 값 제안",
+    finalRequery: "⑤→⑤ 되돌이 화살표: 제안 재질의",
+  };
+  var DEFAULT_GUIDE_STEPS = [
+    { id: "s1", num: "①", role: "시스템", title: "AUTO 질의 자동 생성", desc: "검증 규칙(성상별 유량 OVER, 성상명 표준화 등)을 위반한 항목을 시스템이 스스로 찾아 AS-IS→TO-BE 값을 계산하고 대공정 담당 기술팀 앞으로 질의를 일괄 생성합니다. 설계사 개입 없이 바로 기술팀 확인 단계로 넘어갑니다." },
+    { id: "s2", num: "①→③", role: "기술팀", title: "AUTO 질의 확인 (특이사항 없음)", desc: "\"확인\" 버튼 한 번으로 TO-BE 값이 그 자리에서 제원 DB에 반영되고 질의가 즉시 해결됩니다. 본인이 담당하는 대공정의 질의만 확인할 수 있습니다." },
+    { id: "s3", num: "①→④", role: "기술팀", title: "AUTO 질의에 특이사항 있음 → 수동 전환", desc: "제안된 값이 틀렸거나 추가 논의가 필요하면 \"특이사항 있음\"을 누르고 사유를 입력합니다. 같은 대상·필드를 그대로 들고 수동 질의로 자동 전환되며, 이미 사유를 설명했으므로 설계사 검토(④→답변완료) 단계에서 바로 시작합니다." },
+    { id: "s4", num: "②", role: "설계사", title: "MANUAL 질의 등록", desc: "제원표의 특정 항목에 대해 공종 담당 설계사가 직접 서술형으로 질문을 올립니다(제원표 상세의 \"검증 결과\" 탭에서도 등록 가능). PJT·대공정·필드가 함께 기록됩니다." },
+    { id: "s5", num: "②→④", role: "기술팀", title: "서술형 답변 등록", desc: "대공정 담당 기술팀이 질의 내용을 확인하고 서술형으로 답변을 작성합니다. 등록하면 \"답변완료(TECH_ANSWERED)\" 상태로 넘어가 설계사 검토를 기다립니다." },
+    { id: "s6", num: "④→⑤", role: "설계사", title: "답변 검토", desc: "기술팀 답변에 특이사항이 없으면 \"답변승인\"으로 넘겨 기술팀이 제원을 변경(또는 확인)하게 합니다. 특이사항이 있으면 \"재질의\"로 반려해 기술팀이 다시 답변하도록 되돌립니다(재질의 횟수가 1 늘어납니다)." },
+    { id: "s7", num: "⑤→⑥/⑦", role: "기술팀", title: "값 확인 또는 제원 변경 제안", desc: "AS-IS 값 자체가 이미 맞다면 \"확인\" 버튼 한 번으로 값 변경 없이 바로 종결됩니다. 실제로 값을 고쳐야 한다면 \"값 변경이 필요합니다\"를 눌러 필드를 수정해 제안하고, 검증 규칙(유량 OVER, 성상명 표준화 등)을 통과해야 등록됩니다." },
+    { id: "s8", num: "⑦→⑧", role: "설계사", title: "최종 확인", desc: "제안된 값이 맞으면 \"최종 확인\"으로 그 자리에서 제원 DB에 반영되고 종결됩니다 — 수정 이력이 남고 해당 건설코드의 버전이 하나 올라갑니다. 값이 틀렸으면 \"재질의\"로 반려해 기술팀이 다시 제안하게 합니다." },
+  ];
+  function effectiveNodeLabels() {
+    return Object.assign({}, DEFAULT_NODE_LABELS, (state.guideConfig || {}).nodeLabels || {});
+  }
+  function effectiveEdgeLabels() {
+    return Object.assign({}, DEFAULT_EDGE_LABELS, (state.guideConfig || {}).edgeLabels || {});
+  }
+  function effectiveGuideSteps() {
+    var cfg = state.guideConfig;
+    return (cfg && cfg.steps && cfg.steps.length) ? cfg.steps : DEFAULT_GUIDE_STEPS;
+  }
+  // ---- 설계사·기술팀이 실제로 처리한 횟수를 케이스별로 집계 — 별도 로그 없이 상태 머신이 이미 쓰고
+  // 있는 필드(status/convertedFromId/resolvedVia/answerRequeryCount/finalRequeryCount/messages)를
+  // 그대로 다시 계산하므로, 실제 처리 로직이 바뀌지 않는 한 이 통계는 항상 실제 동작과 일치한다. ----
+  function computeGuideStats() {
+    var manual = state.threads.filter(function (t) { return t.queryType === "MANUAL"; });
+    var auto = state.threads.filter(function (t) { return t.queryType === "AUTO"; });
+    var techAnswerMsgCount = 0;
+    manual.forEach(function (t) { (t.messages || []).forEach(function (m) { if (m.role === "ANSWER") techAnswerMsgCount++; }); });
+    var answerApprovedOrBeyond = manual.filter(function (t) { return ["ANSWER_APPROVED", "VALUE_PROPOSED", "RESOLVED"].indexOf(t.status) !== -1; }).length;
+    var answerRequeryTotal = manual.reduce(function (a, t) { return a + (t.answerRequeryCount || 0); }, 0);
+    var finalRequeryTotal = manual.reduce(function (a, t) { return a + (t.finalRequeryCount || 0); }, 0);
+    var noChangeResolvedCount = manual.filter(function (t) { return t.status === "RESOLVED" && t.resolvedVia === "NO_CHANGE"; }).length;
+    var valueChangeResolvedCount = manual.filter(function (t) { return t.status === "RESOLVED" && t.resolvedVia !== "NO_CHANGE"; }).length;
+    // 값 제안 총 횟수 = 값 제안됨(VALUE_PROPOSED) 단계를 거친 질의마다 최초 제안(1) + 반려로 다시 제안한 횟수(finalRequeryCount)
+    var proposeTotal = manual.filter(function (t) { return t.status === "VALUE_PROPOSED" || (t.status === "RESOLVED" && t.resolvedVia !== "NO_CHANGE"); })
+      .reduce(function (a, t) { return a + 1 + (t.finalRequeryCount || 0); }, 0);
+    return {
+      tech: [
+        { label: "AUTO 질의 확인 (특이사항 없음)", count: auto.filter(function (t) { return t.status === "RESOLVED"; }).length },
+        { label: "AUTO 특이사항 → 수동 전환", count: manual.filter(function (t) { return t.convertedFromId; }).length },
+        { label: "서술형 답변 등록 (재답변 포함)", count: techAnswerMsgCount },
+        { label: "값 확인 (변경 없음 · 즉시 종결)", count: noChangeResolvedCount },
+        { label: "제원 변경 값 제안 (재제안 포함)", count: proposeTotal },
+      ],
+      designer: [
+        { label: "MANUAL 질의 등록", count: manual.filter(function (t) { return !t.convertedFromId; }).length },
+        { label: "답변승인 (특이사항 없음)", count: answerApprovedOrBeyond },
+        { label: "재질의 — 답변 반려", count: answerRequeryTotal },
+        { label: "최종 확인 (제안값 승인)", count: valueChangeResolvedCount },
+        { label: "재질의 — 제안 반려", count: finalRequeryTotal },
+      ],
+    };
+  }
+  function buildFlowSvg(nodeLabels, edgeLabels) {
     function lineTspans(cx, lines, lineH) {
       return lines.map(function (t, i) {
         var dy = i === 0 ? (lines.length > 1 ? -((lines.length - 1) * lineH) / 2 : 0) : lineH;
@@ -1290,7 +1412,10 @@
     function label(x, y, lines, opts) {
       opts = opts || {};
       var color = opts.color || "var(--ink-muted)";
-      var w = opts.w || 120, h = lines.length * 14 + 8;
+      // 관리자가 문구를 고쳐 길이가 달라져도 배경이 텍스트를 항상 가리도록 글자 수 기준으로 자동 계산한다
+      // (opts.w는 "예"처럼 아주 짧은 라벨의 최소 너비로만 쓰인다).
+      var maxLen = lines.reduce(function (m, l) { return Math.max(m, l.length); }, 0);
+      var w = Math.max(opts.w || 0, maxLen * 12 + 14), h = lines.length * 14 + 8;
       var lineHtml = lines.map(function (t, i) { return '<tspan x="' + x + '" dy="' + (i === 0 ? 0 : 14) + '">' + esc(t) + "</tspan>"; }).join("");
       return (
         '<rect x="' + (x - w / 2) + '" y="' + (y - h / 2) + '" width="' + w + '" height="' + h + '" rx="4" fill="var(--surface-2)" opacity="0.95"/>' +
@@ -1306,64 +1431,149 @@
       "</defs>"
     );
     // 시작 — 두 갈래 진입점 (자동 감지 / 설계사 등록)
-    p.push(rect(300, 60, 220, 64, ["① AUTO 질의 생성", "미답변 (OPEN)"], "neutral"));
-    p.push(rect(740, 60, 220, 64, ["② MANUAL 질의 생성", "미답변 (OPEN) · 설계사 등록"], "neutral"));
+    p.push(rect(300, 60, 220, 64, nodeLabels.A1, "neutral"));
+    p.push(rect(740, 60, 220, 64, nodeLabels.M1, "neutral"));
     p.push(arrow("300,92 300,140"));
     p.push(arrow("740,92 740,335 650,335 650,366"));
-    p.push(label(700, 335, ["기술팀 서술형", "답변 등록"], { w: 100 }));
+    p.push(label(700, 335, edgeLabels.teamAnswer, { w: 100 }));
     // AUTO 확인 분기
-    p.push(diamond(300, 220, 125, 80, ["기술팀 확인", "특이사항 없음?"], "tech"));
+    p.push(diamond(300, 220, 125, 80, nodeLabels.D1, "tech"));
     p.push(arrow("175,220 140,220 140,366", { color: "var(--ok)", marker: "flowArrowOk" }));
     p.push(label(150, 190, ["예"], { color: "var(--ok)", w: 26 }));
-    p.push(rect(150, 400, 230, 68, ["③ 해결됨 (RESOLVED)", "TO-BE 값 자동 반영"], "done"));
+    p.push(rect(150, 400, 230, 68, nodeLabels.TE1, "done"));
     p.push(arrow("300,300 300,335 520,335 520,366", { color: "var(--warn)" }));
-    p.push(label(430, 335, ["아니오 → 수동 전환", "(TECH_ANSWERED로 시작)"], { color: "var(--warn)", w: 190 }));
+    p.push(label(430, 335, edgeLabels.autoConvert, { color: "var(--warn)", w: 190 }));
     // 답변완료 (양쪽 진입점 합류)
-    p.push(rect(520, 400, 260, 68, ["④ 답변완료", "(TECH_ANSWERED)"], "neutral"));
+    p.push(rect(520, 400, 260, 68, nodeLabels.MG1, "neutral"));
     p.push(arrow("520,434 520,475"));
     // 설계사 검토 분기 (재질의 루프 #1)
-    p.push(diamond(520, 560, 140, 85, ["설계사 검토", "특이사항 없음?"], "designer"));
+    p.push(diamond(520, 560, 140, 85, nodeLabels.D2, "designer"));
     p.push(arrow("660,560 920,560 920,60 850,60", { color: "var(--warn)", dashed: true, marker: "flowArrowWarn" }));
-    p.push(label(920, 300, ["재질의", "(다시 답변 요청)"], { color: "var(--warn)", w: 100 }));
+    p.push(label(920, 300, edgeLabels.answerRequery, { color: "var(--warn)", w: 100 }));
     p.push(arrow("520,645 520,708", { color: "var(--ok)", marker: "flowArrowOk" }));
     p.push(label(562, 675, ["예"], { color: "var(--ok)", w: 26 }));
     // 답변승인
-    p.push(rect(520, 740, 260, 64, ["⑤ 답변승인", "(ANSWER_APPROVED)"], "neutral"));
+    p.push(rect(520, 740, 260, 64, nodeLabels.N_APPROVED, "neutral"));
     p.push(arrow("520,772 520,830"));
     // 기술팀 확인 — AS-IS 값 유지 여부 (신규: 값이 그대로면 확인만으로 즉시 종결)
-    p.push(diamond(520, 920, 150, 90, ["기술팀 확인", "AS-IS 값 그대로", "맞는가?"], "tech"));
+    p.push(diamond(520, 920, 150, 90, nodeLabels.D3, "tech"));
     p.push(arrow("370,920 350,920", { color: "var(--ok)", marker: "flowArrowOk" }));
     p.push(label(360, 895, ["예"], { color: "var(--ok)", w: 26 }));
-    p.push(rect(230, 920, 240, 68, ["⑥ 해결됨 (RESOLVED)", "확인만으로 즉시 종결"], "done"));
+    p.push(rect(230, 920, 240, 68, nodeLabels.TE2, "done"));
     p.push(arrow("520,1010 520,1068"));
-    p.push(label(605, 1039, ["아니오 → 값 제안"], { w: 128 }));
+    p.push(label(605, 1039, edgeLabels.valuePropose, { w: 128 }));
     // 값 제안됨
-    p.push(rect(520, 1100, 260, 64, ["⑦ 값 제안됨", "(VALUE_PROPOSED)"], "neutral"));
+    p.push(rect(520, 1100, 260, 64, nodeLabels.N_PROPOSED, "neutral"));
     p.push(arrow("520,1132 520,1190"));
     // 설계사 최종확인 분기 (재질의 루프 #2)
-    p.push(diamond(520, 1280, 150, 90, ["설계사 최종확인", "제안값 승인?"], "designer"));
+    p.push(diamond(520, 1280, 150, 90, nodeLabels.D4, "designer"));
     p.push(arrow("370,1280 100,1280 100,740 390,740", { color: "var(--warn)", dashed: true, marker: "flowArrowWarn" }));
-    p.push(label(100, 1000, ["재질의", "(다시 제안 요청)"], { color: "var(--warn)", w: 100 }));
+    p.push(label(100, 1000, edgeLabels.finalRequery, { color: "var(--warn)", w: 100 }));
     p.push(arrow("520,1370 520,1420", { color: "var(--ok)", marker: "flowArrowOk" }));
     p.push(label(562, 1395, ["예"], { color: "var(--ok)", w: 26 }));
     // 최종 종결
-    p.push(rect(520, 1460, 340, 80, ["⑧ 해결됨 (RESOLVED)", "DB 반영 · 수정이력 기록 · 버전+1"], "done"));
+    p.push(rect(520, 1460, 340, 80, nodeLabels.TFINAL, "done"));
     return (
       '<svg viewBox="0 0 1040 1530" role="img" aria-label="제원 질의응답 처리 흐름: 자동/수동 질의가 담당 기술팀과 설계사 사이를 오가며 미답변에서 해결됨까지 거치는 모든 상태와 재질의 루프를 보여준다">' +
       p.join("") +
       "</svg>"
     );
-  })();
+  }
+  function renderGuideStepReadonly(step) {
+    var chipClass = step.role === "기술팀" ? "role-TECH_LEAD" : step.role === "설계사" ? "role-DESIGNER" : "neutral";
+    return (
+      '<div class="guide-step"><div class="gs-num">' + esc(step.num) + '</div><div class="body">' +
+        '<span class="chip ' + chipClass + '">' + esc(step.role) + "</span> <b>" + esc(step.title) + "</b>" +
+        "<p>" + esc(step.desc) + "</p>" +
+      "</div></div>"
+    );
+  }
+  function renderStepEditRow(step, idx, total) {
+    var roles = ["시스템", "기술팀", "설계사"];
+    return (
+      '<div class="guide-step-edit" data-step-idx="' + idx + '">' +
+        '<div class="row1">' +
+          '<input class="text gse-num" data-field="num" value="' + esc(step.num) + '" placeholder="번호(예: ①→③)">' +
+          '<select class="gse-role" data-field="role">' + roles.map(function (r) { return '<option value="' + r + '"' + (step.role === r ? " selected" : "") + ">" + r + "</option>"; }).join("") + "</select>" +
+          '<input class="text gse-title" data-field="title" value="' + esc(step.title) + '" placeholder="제목">' +
+          '<button class="btn small gse-btn" data-step-up="' + idx + '"' + (idx === 0 ? " disabled" : "") + ' title="위로">▲</button>' +
+          '<button class="btn small gse-btn" data-step-down="' + idx + '"' + (idx === total - 1 ? " disabled" : "") + ' title="아래로">▼</button>' +
+          '<button class="btn small gse-btn" data-step-del="' + idx + '">삭제</button>' +
+        "</div>" +
+        '<textarea class="text gse-desc" data-field="desc" rows="2" placeholder="설명">' + esc(step.desc) + "</textarea>" +
+      "</div>"
+    );
+  }
+  function renderLabelEditGrid(draft) {
+    var nodeFields = Object.keys(DEFAULT_NODE_LABELS).map(function (k) {
+      return '<div class="field"><label class="field-label">' + esc(NODE_LABEL_DESC[k] || k) + '</label>' +
+        '<textarea class="text" data-node-key="' + k + '" rows="2">' + esc((draft.nodeLabels[k] || []).join("\n")) + "</textarea></div>";
+    }).join("");
+    var edgeFields = Object.keys(DEFAULT_EDGE_LABELS).map(function (k) {
+      return '<div class="field"><label class="field-label">' + esc(EDGE_LABEL_DESC[k] || k) + '</label>' +
+        '<textarea class="text" data-edge-key="' + k + '" rows="2">' + esc((draft.edgeLabels[k] || []).join("\n")) + "</textarea></div>";
+    }).join("");
+    return (
+      '<p class="auto-note" style="margin:10px 0 0">박스/화살표 문구는 줄바꿈으로 여러 줄을 나눕니다. 도형 크기는 고정되어 있으니 원래 문구와 비슷한 길이(한 줄 14자 내외)로 유지하는 걸 권장합니다. 아래를 고치면 위 미리보기가 바로 바뀝니다.</p>' +
+      '<div class="guide-edit-grid">' + nodeFields + edgeFields + "</div>"
+    );
+  }
+  function renderStatTable(title, rows) {
+    var total = rows.reduce(function (a, r) { return a + r.count; }, 0);
+    var trs = rows.map(function (r) { return "<tr><td>" + esc(r.label) + "</td><td>" + r.count.toLocaleString("ko-KR") + "건</td></tr>"; }).join("");
+    return (
+      '<div><h3 style="font-size:13px;margin:0 0 6px">' + esc(title) + '</h3><table class="stat-list"><tbody>' + trs +
+        '<tr class="total"><td>합계</td><td>' + total.toLocaleString("ko-KR") + "건</td></tr>" +
+      "</tbody></table></div>"
+    );
+  }
+  function startGuideEdit() {
+    state.guideDraft = {
+      nodeLabels: JSON.parse(JSON.stringify(effectiveNodeLabels())),
+      edgeLabels: JSON.parse(JSON.stringify(effectiveEdgeLabels())),
+      steps: JSON.parse(JSON.stringify(effectiveGuideSteps())),
+    };
+    state.guideEditing = true;
+    state.guideSaveError = null;
+  }
+  function saveGuideConfig() {
+    state.guideSaving = true; state.guideSaveError = null; render();
+    var doc = {
+      nodeLabels: state.guideDraft.nodeLabels, edgeLabels: state.guideDraft.edgeLabels, steps: state.guideDraft.steps,
+      updatedAt: nowIso(), updatedBy: (currentOwner() || {}).name || "관리자",
+    };
+    store.setGuideConfig(doc).then(function () {
+      state.guideEditing = false; state.guideDraft = null; state.guideSaving = false; render();
+    }).catch(function (e) {
+      state.guideSaving = false; state.guideSaveError = "저장 실패: " + (e && e.message ? e.message : e); render();
+    });
+  }
   function renderGuidePage(main) {
+    var owner = currentOwner();
+    var isAdmin = owner && owner.role === "ADMIN";
+    var editing = !!(isAdmin && state.guideEditing && state.guideDraft);
+    var nodeLabels = editing ? state.guideDraft.nodeLabels : effectiveNodeLabels();
+    var edgeLabels = editing ? state.guideDraft.edgeLabels : effectiveEdgeLabels();
+    var steps = editing ? state.guideDraft.steps : effectiveGuideSteps();
+    var stats = computeGuideStats();
+    var cfg = state.guideConfig;
     main.innerHTML =
       '<div class="page">' +
         "<h1 style=\"font-size:19px;margin-bottom:4px\">업무 가이드</h1>" +
-        '<p style="font-size:12.5px;color:var(--ink-muted);margin:0 0 16px">처음 이 화면을 쓰는 담당자를 위한 매뉴얼입니다. 제원 질의 하나가 등록되고 나서 ' +
+        '<p style="font-size:12.5px;color:var(--ink-muted);margin:0 0 6px">처음 이 화면을 쓰는 담당자를 위한 매뉴얼입니다. 제원 질의 하나가 등록되고 나서 ' +
           "최종 DB 반영으로 종결되기까지 실제로 거치는 모든 경로(자동/수동, 재질의, 값 변경 없이 확인만 하는 경우)를 아래 흐름도 한 장에 담았습니다 — " +
-          "\"질의응답\" 탭에서 보이는 상태 칩(미답변/답변완료/답변승인/값 제안됨/해결됨) 문구와 그대로 대응됩니다.</p>" +
+          "\"질의응답\" 탭에서 보이는 상태 칩(미답변/답변완료/답변승인/값 제안됨/해결됨) 문구와 그대로 대응됩니다." +
+          (isAdmin ? " 관리자는 흐름도 문구와 단계별 설명을 직접 고쳐 쓸 수 있습니다." : "") + "</p>" +
+        (cfg && cfg.updatedAt ? '<p style="font-size:11px;color:var(--ink-faint);margin:0 0 14px">마지막 수정: ' + esc(cfg.updatedBy || "") + " · " + fmtTime(cfg.updatedAt) + "</p>" : "") +
         '<div class="panel">' +
-          "<h2>전체 처리 흐름</h2>" +
-          '<figure style="margin:10px 0 0"><div class="flow-wrap">' + FLOW_SVG + "</div>" +
+          '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">' +
+            "<h2>전체 처리 흐름</h2>" +
+            (isAdmin ? (editing
+              ? '<div class="btn-row"><button class="btn primary small" id="guideSaveBtn"' + (state.guideSaving ? " disabled" : "") + ">" + (state.guideSaving ? "저장 중..." : "저장") + "</button><button class=\"btn small\" id=\"guideCancelBtn\">취소</button></div>"
+              : '<button class="btn small" id="guideEditBtn">✏️ 편집 (관리자)</button>') : "") +
+          "</div>" +
+          (state.guideSaveError ? '<p class="error-text">' + esc(state.guideSaveError) + "</p>" : "") +
+          '<figure style="margin:10px 0 0"><div class="flow-wrap">' + buildFlowSvg(nodeLabels, edgeLabels) + "</div>" +
             '<figcaption class="flow-caption">① AUTO 질의부터 ⑧ 최종 DB 반영까지 — 실선 화살표는 다음 단계로 진행, 점선(주황) 화살표는 반려로 인한 재질의 되돌아가기를 뜻합니다.</figcaption>' +
           "</figure>" +
           '<div class="flow-legend">' +
@@ -1372,18 +1582,20 @@
             '<div class="item"><span class="sw" style="background:var(--border-strong)"></span>진행 중 상태(대기)</div>' +
             '<div class="item"><span class="sw" style="background:var(--ok)"></span>종결(RESOLVED)</div>' +
           "</div>" +
+          (editing ? renderLabelEditGrid(state.guideDraft) : "") +
         "</div>" +
         '<div class="panel">' +
-          "<h2>단계별 설명</h2>" +
-          '<p class="lead" style="margin-top:4px">번호는 위 흐름도의 ①~⑧과 같습니다.</p>' +
-          guideStep("①", "시스템", "AUTO 질의 자동 생성", "검증 규칙(성상별 유량 OVER, 성상명 표준화 등)을 위반한 항목을 시스템이 스스로 찾아 AS-IS→TO-BE 값을 계산하고 대공정 담당 기술팀 앞으로 질의를 일괄 생성합니다. 설계사 개입 없이 바로 기술팀 확인 단계로 넘어갑니다.") +
-          guideStep("①→③", "기술팀", "AUTO 질의 확인 (특이사항 없음)", "\"확인\" 버튼 한 번으로 TO-BE 값이 그 자리에서 제원 DB에 반영되고 질의가 즉시 해결됩니다. 본인이 담당하는 대공정의 질의만 확인할 수 있습니다.") +
-          guideStep("①→④", "기술팀", "AUTO 질의에 특이사항 있음 → 수동 전환", "제안된 값이 틀렸거나 추가 논의가 필요하면 \"특이사항 있음\"을 누르고 사유를 입력합니다. 같은 대상·필드를 그대로 들고 수동 질의로 자동 전환되며, 이미 사유를 설명했으므로 설계사 검토(④→답변완료) 단계에서 바로 시작합니다.") +
-          guideStep("②", "설계사", "MANUAL 질의 등록", "제원표의 특정 항목에 대해 공종 담당 설계사가 직접 서술형으로 질문을 올립니다(제원표 상세의 \"검증 결과\" 탭에서도 등록 가능). PJT·대공정·필드가 함께 기록됩니다.") +
-          guideStep("②→④", "기술팀", "서술형 답변 등록", "대공정 담당 기술팀이 질의 내용을 확인하고 서술형으로 답변을 작성합니다. 등록하면 \"답변완료(TECH_ANSWERED)\" 상태로 넘어가 설계사 검토를 기다립니다.") +
-          guideStep("④→⑤", "설계사", "답변 검토", "기술팀 답변에 특이사항이 없으면 \"답변승인\"으로 넘겨 기술팀이 제원을 변경(또는 확인)하게 합니다. 특이사항이 있으면 \"재질의\"로 반려해 기술팀이 다시 답변하도록 되돌립니다(재질의 횟수가 1 늘어납니다).") +
-          guideStep("⑤→⑥/⑦", "기술팀", "값 확인 또는 제원 변경 제안", "AS-IS 값 자체가 이미 맞다면 \"확인\" 버튼 한 번으로 값 변경 없이 바로 종결됩니다. 실제로 값을 고쳐야 한다면 \"값 변경이 필요합니다\"를 눌러 필드를 수정해 제안하고, 검증 규칙(유량 OVER, 성상명 표준화 등)을 통과해야 등록됩니다.") +
-          guideStep("⑦→⑧", "설계사", "최종 확인", "제안된 값이 맞으면 \"최종 확인\"으로 그 자리에서 제원 DB에 반영되고 종결됩니다 — 수정 이력이 남고 해당 건설코드의 버전이 하나 올라갑니다. 값이 틀렸으면 \"재질의\"로 반려해 기술팀이 다시 제안하게 합니다.") +
+          "<h2>처리 현황 — 케이스별 횟수</h2>" +
+          '<p class="lead" style="margin-top:4px">위 흐름도의 각 단계가 지금까지 실제로 몇 번 일어났는지 보여줍니다 — 질의 데이터가 바뀔 때마다 실시간으로 다시 계산되므로 항상 실제 처리 현황과 일치합니다.</p>' +
+          '<div class="stat-cols">' + renderStatTable("🔧 기술팀", stats.tech) + renderStatTable("📐 설계사", stats.designer) + "</div>" +
+        "</div>" +
+        '<div class="panel">' +
+          '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">' +
+            "<h2>단계별 설명</h2>" +
+            (editing ? '<button class="btn small" id="guideAddStepBtn">+ 단계 추가</button>' : "") +
+          "</div>" +
+          '<p class="lead" style="margin-top:4px">번호는 위 흐름도 표기와 같습니다.' + (editing ? " 편집 중입니다 — \"저장\"을 눌러야 모두에게 반영됩니다." : "") + "</p>" +
+          (editing ? steps.map(function (s, i) { return renderStepEditRow(s, i, steps.length); }).join("") : steps.map(renderGuideStepReadonly).join("")) +
         "</div>" +
         '<div class="panel">' +
           "<h2>화면 기능 한눈에 보기</h2>" +
@@ -1396,15 +1608,40 @@
           "</ul>" +
         "</div>" +
       "</div>";
-  }
-  function guideStep(num, roleLabel, title, desc) {
-    var chipClass = roleLabel === "기술팀" ? "role-TECH_LEAD" : roleLabel === "설계사" ? "role-DESIGNER" : "neutral";
-    return (
-      '<div class="guide-step"><div class="gs-num">' + esc(num) + '</div><div class="body">' +
-        '<span class="chip ' + chipClass + '">' + esc(roleLabel) + "</span> <b>" + esc(title) + "</b>" +
-        "<p>" + esc(desc) + "</p>" +
-      "</div></div>"
-    );
+
+    if (isAdmin) {
+      var editBtn = document.getElementById("guideEditBtn");
+      if (editBtn) editBtn.onclick = function () { startGuideEdit(); render(); };
+      var saveBtn = document.getElementById("guideSaveBtn");
+      if (saveBtn) saveBtn.onclick = saveGuideConfig;
+      var cancelBtn = document.getElementById("guideCancelBtn");
+      if (cancelBtn) cancelBtn.onclick = function () { state.guideEditing = false; state.guideDraft = null; state.guideSaveError = null; render(); };
+      var addStepBtn = document.getElementById("guideAddStepBtn");
+      if (addStepBtn) addStepBtn.onclick = function () { state.guideDraft.steps.push({ id: uid(), num: "", role: "기술팀", title: "", desc: "" }); render(); };
+    }
+    if (editing) {
+      Array.prototype.forEach.call(main.querySelectorAll("[data-node-key]"), function (ta) {
+        ta.onchange = function () { state.guideDraft.nodeLabels[ta.dataset.nodeKey] = ta.value.split("\n"); render(); };
+      });
+      Array.prototype.forEach.call(main.querySelectorAll("[data-edge-key]"), function (ta) {
+        ta.onchange = function () { state.guideDraft.edgeLabels[ta.dataset.edgeKey] = ta.value.split("\n"); render(); };
+      });
+      Array.prototype.forEach.call(main.querySelectorAll(".guide-step-edit"), function (row) {
+        var idx = +row.dataset.stepIdx;
+        Array.prototype.forEach.call(row.querySelectorAll("[data-field]"), function (el) {
+          el.onchange = function () { state.guideDraft.steps[idx][el.dataset.field] = el.value; render(); };
+        });
+      });
+      Array.prototype.forEach.call(main.querySelectorAll("[data-step-up]"), function (b) {
+        b.onclick = function () { var i = +b.dataset.stepUp, arr = state.guideDraft.steps; if (i > 0) { var tmp = arr[i - 1]; arr[i - 1] = arr[i]; arr[i] = tmp; render(); } };
+      });
+      Array.prototype.forEach.call(main.querySelectorAll("[data-step-down]"), function (b) {
+        b.onclick = function () { var i = +b.dataset.stepDown, arr = state.guideDraft.steps; if (i < arr.length - 1) { var tmp = arr[i + 1]; arr[i + 1] = arr[i]; arr[i] = tmp; render(); } };
+      });
+      Array.prototype.forEach.call(main.querySelectorAll("[data-step-del]"), function (b) {
+        b.onclick = function () { state.guideDraft.steps.splice(+b.dataset.stepDel, 1); render(); };
+      });
+    }
   }
 
   // ===================================================================
@@ -2213,6 +2450,7 @@
       store.watchSheets(function (map) { state.sheets = map; render(); }),
       store.watchThreads(function (docs) { state.threads = docs; render(); }),
       store.watchCorrections(function (docs) { state.corrections = docs; render(); }),
+      store.watchGuideConfig(function (doc) { state.guideConfig = doc; render(); }),
     ];
   }
   function setLive(on, label) {
