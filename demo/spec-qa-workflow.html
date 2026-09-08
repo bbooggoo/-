@@ -2109,9 +2109,32 @@
   // "대분류별 총량 집계"(computeAggregation)가 쓰는 AGG_SPECS를 그대로 진실의 원천으로 삼아 — 예:
   // POWER는 전력값만, 폐액은 실사용량만, GAS/AIR는 배관수량·유량만 — 제원집계 로직과 항상 같은 필드
   // 집합을 보여준다. 대분류를 지정하지 않으면(전체) 지금까지처럼 SPEC_FIELDS 전체를 보여준다.
+  // 필드가 2개인 대분류(GAS/AIR·WATER·WASTE WATER·EXHAUST)는 원본 필드 각각뿐 아니라, 제원집계
+  // 로직 그대로 두 필드를 곱한 "__agg__"(계산값 — SUMMARY 탭 "대분류별 총량 집계"와 같은 값)도 맨
+  // 앞에 추가한다. 필드가 1개뿐인 대분류는 그 필드 자체가 이미 계산값과 같으므로 따로 만들지 않는다.
   function pivotMeasureFieldsFor(category) {
     var spec = category ? AGG_SPECS[category] : null;
-    return spec ? spec.fields.slice() : SPEC_FIELDS.slice();
+    if (!spec) return SPEC_FIELDS.slice();
+    return spec.fields.length > 1 ? ["__agg__"].concat(spec.fields) : spec.fields.slice();
+  }
+  // 값(Values) 드롭다운·표 헤더·그래프 범례 등에 쓰는 사람이 읽는 라벨. "__agg__"는 대분류가 정해져야만
+  // (AGG_SPECS[category]가 있어야만) 뜻이 정해지므로 category를 함께 받는다.
+  function pivotMeasureLabel(key, category) {
+    if (key === "__count__") return "건수";
+    if (key === "__agg__") {
+      var spec = category && AGG_SPECS[category];
+      return spec ? spec.fields.join("×") + " 집계값(" + spec.unit + ")" : "집계값";
+    }
+    return key;
+  }
+  // 한 항목(item)의 "__agg__" 값 — computeAggregation()의 그룹 합산 전 단계(한 행의 amount)와 정확히
+  // 같은 계산이다: value_fields를 전부 곱하되, 하나라도 없으면(다른 대분류의 행 등) null.
+  function itemAggValue(it) {
+    var spec = AGG_SPECS[it.category];
+    if (!spec || spec.fields.length < 2) return null;
+    var amount = 1, any = false;
+    spec.fields.forEach(function (f) { if (it[f] != null) any = true; amount *= (it[f] || 0); });
+    return any ? amount : null;
   }
   var MAX_PIVOT_GROUPS = 40; // 표/그래프가 감당할 수 있는 행 상한 — 넘으면 나머지를 "기타"로 묶는다
   var MAX_PIVOT_SERIES = 8;  // 팔레트 계열(series) 슬롯 수와 맞춘 열(계열) 상한
@@ -2122,6 +2145,7 @@
         var key = itemKeyField(it);
         var row = { pjt: s.pjt || "(미지정)", code: s.code, dept: s.dept, category: it.category, keyField: key.value, equip: it.설비모듈 || "(미지정)" };
         SPEC_FIELDS.forEach(function (f) { row[f] = typeof it[f] === "number" ? it[f] : null; });
+        row.__agg__ = itemAggValue(it);
         rows.push(row);
       });
     });
@@ -2416,7 +2440,7 @@
     var rows = pivotFilteredRows();
     var norm = normalizePivotState();
     var rowKey = norm.rowKey, colKey = norm.colKey, measureKey = norm.measureKey, agg = norm.agg, chartType = norm.chartType, measureFields = norm.measureFields;
-    var measureLabel = measureKey === "__count__" ? "건수" : measureKey;
+    var measureLabel = pivotMeasureLabel(measureKey, state.pivotFilterCategory);
     var pivot = computePivot(rows, rowKey, colKey, measureKey, agg);
     var rowDimLabel = pivotDimLabel(rowKey);
     var colDimLabel = colKey ? pivotDimLabel(colKey) : "";
@@ -2435,7 +2459,8 @@
         "<h1 style=\"font-size:19px;margin-bottom:4px\">그래프 만들기</h1>" +
         '<p style="font-size:12.5px;color:var(--ink-muted);margin:0 0 16px">엑셀 피벗테이블처럼 <b>행/열/값/집계</b>를 고르면 표와 그래프가 그 자리에서 바로 만들어집니다. ' +
           "상단 <b>PJT 선택</b> 범위를 그대로 따르고, 아래 대공정/대분류로 한 번 더 좁힐 수 있습니다. 행(또는 열)이 " + MAX_PIVOT_GROUPS + "개(계열은 " + MAX_PIVOT_SERIES + "개)를 넘으면 나머지는 \"기타\"로 묶습니다. " +
-          "<b>대분류를 고르면 값(Values)도 그 대분류의 제원집계 로직(대분류별 총량 집계와 같은 기준)이 쓰는 필드로 자동으로 좁혀집니다</b> — 예: POWER→전력값, 폐액→실사용량, GAS/AIR→배관수량·유량.</p>" +
+          "<b>대분류를 고르면 값(Values)도 그 대분류의 제원집계 로직(대분류별 총량 집계와 같은 기준)이 쓰는 필드로 자동으로 좁혀집니다</b> — 예: POWER→전력값, 폐액→실사용량, GAS/AIR→배관수량·유량. " +
+          "계산값 필드가 2개인 대분류(GAS/AIR·WATER·WASTE WATER·EXHAUST)는 원본 필드 각각뿐 아니라 두 필드를 곱한 <b>집계값(SUMMARY 탭과 같은 총량)</b>도 값(Values) 맨 위에 추가로 고를 수 있습니다.</p>" +
         '<div class="panel"><div class="filter-bar">' +
           '<div class="field"><label class="field-label">행(Rows)</label><select id="pivotRowSel">' +
             PIVOT_DIMENSIONS.map(function (d) { return '<option value="' + d.key + '"' + (rowKey === d.key ? " selected" : "") + ">" + esc(d.label) + "</option>"; }).join("") +
@@ -2444,7 +2469,7 @@
             PIVOT_DIMENSIONS.filter(function (d) { return d.key !== rowKey; }).map(function (d) { return '<option value="' + d.key + '"' + (colKey === d.key ? " selected" : "") + ">" + esc(d.label) + "</option>"; }).join("") +
           "</select></div>" +
           '<div class="field"><label class="field-label">값(Values)' + (state.pivotFilterCategory ? ' <span style="font-weight:400;color:var(--ink-faint)">— ' + esc(state.pivotFilterCategory) + '만</span>' : "") + '</label><select id="pivotMeasureSel">' +
-            measureFields.map(function (f) { return '<option value="' + f + '"' + (measureKey === f ? " selected" : "") + ">" + f + "</option>"; }).join("") +
+            measureFields.map(function (f) { return '<option value="' + f + '"' + (measureKey === f ? " selected" : "") + ">" + esc(pivotMeasureLabel(f, state.pivotFilterCategory)) + "</option>"; }).join("") +
             '<option value="__count__"' + (measureKey === "__count__" ? " selected" : "") + ">건수(개수)</option>" +
           "</select></div>" +
           '<div class="field"><label class="field-label">집계 방식</label><select id="pivotAggSel"' + (measureKey === "__count__" ? " disabled" : "") + ">" +
@@ -2621,7 +2646,11 @@
     var deptList = MAJOR_PROCESSES.join(", ");
     var catList = CAT_ORDER.join(", ");
     var dimList = PIVOT_DIMENSIONS.map(function (d) { return d.key + "(" + d.label + ")"; }).join(", ");
-    var measureNote = CAT_ORDER.map(function (c) { return c + ": " + AGG_SPECS[c].fields.join("/"); }).join(" · ");
+    var measureNote = CAT_ORDER.map(function (c) {
+      var spec = AGG_SPECS[c];
+      var opts = spec.fields.length > 1 ? ["__agg__(" + spec.fields.join("×") + " 총량, " + spec.unit + ")"].concat(spec.fields) : spec.fields.slice();
+      return c + ": " + opts.join("/");
+    }).join(" · ");
     return (
       "당신은 반도체 플랜트 \"제원 질의 데스크\" 앱의 AI 어시스턴트입니다. 사용자의 한국어 질문을 분석해서, " +
       "표+그래프(피벗) 화면을 만들 조건을 JSON 하나로만 답하세요. 다른 설명 문장은 절대 포함하지 마세요.\n\n" +
@@ -2631,15 +2660,17 @@
       "- category (대분류, 질문에 없으면 null): " + catList + "\n" +
       "- rowKey / colKey (행/열 기준 — colKey는 질문에 없으면 null): " + dimList + "\n" +
       "  \"성상별\"·\"자재별\"·\"전원종류별\"·\"항목별\"은 keyField를 쓰세요.\n" +
-      "- measure (값 필드 — 대분류별로 제원집계 로직(위 대분류: 필드 목록)이 쓰는 필드만 유효합니다. " +
-        "대분류를 함께 정하세요): " + measureNote + " (또는 개수를 세는 \"__count__\")\n" +
+      "- measure (값 필드 — 대분류별로 제원집계 로직이 쓰는 필드만 유효합니다. 대분류를 함께 정하세요): " +
+        measureNote + " (또는 개수를 세는 \"__count__\")\n" +
+      "  \"제원집계\"·\"총량\"·\"집계값\" 같은 표현이 나오고 그 대분류의 필드가 2개 이상이면(위에서 __agg__가 " +
+        "있는 대분류) measure는 개별 필드가 아니라 \"__agg__\"로 답하세요 — SUMMARY 탭의 대분류별 총량 집계와 같은 값입니다.\n" +
       "- agg (집계 방식): sum(합계) / avg(평균) / count(개수) / max(최대) / min(최소)\n" +
       "- chartType: bar(막대) 또는 pie(원형 — colKey가 없을 때만 가능)\n\n" +
       "다음 JSON 스키마로만 답하세요(설명 문장 없이 JSON 객체 하나만):\n" +
       '{"pjt": string|null, "dept": string|null, "category": string|null, "rowKey": string, "colKey": string|null, "measure": string, "agg": string, "chartType": "bar"|"pie", "answer": string}\n' +
       '"answer"는 사용자에게 보여줄 한두 문장의 한국어 설명입니다.\n\n' +
       "예시 — 질문: \"P5 ph1의 GAS/AIR의 성상별 제원집계를 표랑 그래프로 반환해줘\" 라면:\n" +
-      '{"pjt":"P5 ph1","dept":null,"category":"GAS/AIR","rowKey":"keyField","colKey":null,"measure":"유량","agg":"sum","chartType":"bar","answer":"P5 ph1의 GAS/AIR 성상별 유량 합계를 표와 그래프로 보여드립니다."}\n\n' +
+      '{"pjt":"P5 ph1","dept":null,"category":"GAS/AIR","rowKey":"keyField","colKey":null,"measure":"__agg__","agg":"sum","chartType":"bar","answer":"P5 ph1의 GAS/AIR 성상별 집계값(배관수량×유량 총량)을 표와 그래프로 보여드립니다."}\n\n' +
       "사용자 질문: " + question
     );
   }
@@ -2698,7 +2729,7 @@
       var rows = pivotFilteredRows();
       var pivot = computePivot(rows, norm.rowKey, norm.colKey, norm.measureKey, norm.agg);
       var rowDimLabel = pivotDimLabel(norm.rowKey);
-      var measureLabel = norm.measureKey === "__count__" ? "건수" : norm.measureKey;
+      var measureLabel = pivotMeasureLabel(norm.measureKey, state.pivotFilterCategory);
       var aoa = pivotTableAoA(pivot, rowDimLabel, measureLabel);
       var chartForRender = norm.chartType === "pie" ? capRowsForPie(pivot) : pivot;
       var chart = pivot.rowVals.length ? (norm.chartType === "pie" ? drawPivotPie(chartForRender) : drawPivotBar(pivot, 320)) : null;
