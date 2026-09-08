@@ -2082,6 +2082,14 @@
   ];
   function pivotDimLabel(key) { var d = PIVOT_DIMENSIONS.filter(function (x) { return x.key === key; })[0]; return d ? d.label : key; }
   var PIVOT_AGG_LABEL = { sum: "합계", avg: "평균", count: "개수", max: "최대", min: "최소" };
+  // 대분류(category)를 필터로 고르면 "값(Values)"도 그 대분류가 실제로 갖는 항목만 보이도록 좁힌다.
+  // "대분류별 총량 집계"(computeAggregation)가 쓰는 AGG_SPECS를 그대로 진실의 원천으로 삼아 — 예:
+  // POWER는 전력값만, 폐액은 실사용량만, GAS/AIR는 배관수량·유량만 — 제원집계 로직과 항상 같은 필드
+  // 집합을 보여준다. 대분류를 지정하지 않으면(전체) 지금까지처럼 SPEC_FIELDS 전체를 보여준다.
+  function pivotMeasureFieldsFor(category) {
+    var spec = category ? AGG_SPECS[category] : null;
+    return spec ? spec.fields.slice() : SPEC_FIELDS.slice();
+  }
   var MAX_PIVOT_GROUPS = 40; // 표/그래프가 감당할 수 있는 행 상한 — 넘으면 나머지를 "기타"로 묶는다
   var MAX_PIVOT_SERIES = 8;  // 팔레트 계열(series) 슬롯 수와 맞춘 열(계열) 상한
   function pivotSourceRows() {
@@ -2345,7 +2353,12 @@
     var rowKey = state.pivotRow || "dept";
     var colKey = state.pivotCol || "";
     if (colKey === rowKey) colKey = state.pivotCol = ""; // 같은 필드를 행/열에 동시에 못 고르게 한다
-    var measureKey = state.pivotMeasure || "유량";
+    // 대분류 필터에 맞춰 값(Values) 후보를 좁히고, 지금 골라둔 값이 그 목록 밖이면(예: 대분류를
+    // POWER로 바꿨는데 값이 여전히 "유량") 첫 후보로 자동 전환한다 — 행/열 중복 방지와 같은 패턴.
+    var measureFields = pivotMeasureFieldsFor(state.pivotFilterCategory);
+    var measureKey = state.pivotMeasure || measureFields[0];
+    if (measureKey !== "__count__" && measureFields.indexOf(measureKey) === -1) measureKey = measureFields[0];
+    state.pivotMeasure = measureKey;
     var agg = measureKey === "__count__" ? "count" : (state.pivotAgg || "sum");
     if (colKey && state.pivotChartType === "pie") state.pivotChartType = "bar"; // 파이는 열이 없을 때만
     var chartType = state.pivotChartType || "bar";
@@ -2367,7 +2380,8 @@
       '<div class="page">' +
         "<h1 style=\"font-size:19px;margin-bottom:4px\">그래프 만들기</h1>" +
         '<p style="font-size:12.5px;color:var(--ink-muted);margin:0 0 16px">엑셀 피벗테이블처럼 <b>행/열/값/집계</b>를 고르면 표와 그래프가 그 자리에서 바로 만들어집니다. ' +
-          "상단 <b>PJT 선택</b> 범위를 그대로 따르고, 아래 대공정/대분류로 한 번 더 좁힐 수 있습니다. 행(또는 열)이 " + MAX_PIVOT_GROUPS + "개(계열은 " + MAX_PIVOT_SERIES + "개)를 넘으면 나머지는 \"기타\"로 묶습니다.</p>" +
+          "상단 <b>PJT 선택</b> 범위를 그대로 따르고, 아래 대공정/대분류로 한 번 더 좁힐 수 있습니다. 행(또는 열)이 " + MAX_PIVOT_GROUPS + "개(계열은 " + MAX_PIVOT_SERIES + "개)를 넘으면 나머지는 \"기타\"로 묶습니다. " +
+          "<b>대분류를 고르면 값(Values)도 그 대분류의 제원집계 로직(대분류별 총량 집계와 같은 기준)이 쓰는 필드로 자동으로 좁혀집니다</b> — 예: POWER→전력값, 폐액→실사용량, GAS/AIR→배관수량·유량.</p>" +
         '<div class="panel"><div class="filter-bar">' +
           '<div class="field"><label class="field-label">행(Rows)</label><select id="pivotRowSel">' +
             PIVOT_DIMENSIONS.map(function (d) { return '<option value="' + d.key + '"' + (rowKey === d.key ? " selected" : "") + ">" + esc(d.label) + "</option>"; }).join("") +
@@ -2375,8 +2389,8 @@
           '<div class="field"><label class="field-label">열(Columns, 선택)</label><select id="pivotColSel"><option value="">없음</option>' +
             PIVOT_DIMENSIONS.filter(function (d) { return d.key !== rowKey; }).map(function (d) { return '<option value="' + d.key + '"' + (colKey === d.key ? " selected" : "") + ">" + esc(d.label) + "</option>"; }).join("") +
           "</select></div>" +
-          '<div class="field"><label class="field-label">값(Values)</label><select id="pivotMeasureSel">' +
-            SPEC_FIELDS.map(function (f) { return '<option value="' + f + '"' + (measureKey === f ? " selected" : "") + ">" + f + "</option>"; }).join("") +
+          '<div class="field"><label class="field-label">값(Values)' + (state.pivotFilterCategory ? ' <span style="font-weight:400;color:var(--ink-faint)">— ' + esc(state.pivotFilterCategory) + '만</span>' : "") + '</label><select id="pivotMeasureSel">' +
+            measureFields.map(function (f) { return '<option value="' + f + '"' + (measureKey === f ? " selected" : "") + ">" + f + "</option>"; }).join("") +
             '<option value="__count__"' + (measureKey === "__count__" ? " selected" : "") + ">건수(개수)</option>" +
           "</select></div>" +
           '<div class="field"><label class="field-label">집계 방식</label><select id="pivotAggSel"' + (measureKey === "__count__" ? " disabled" : "") + ">" +
