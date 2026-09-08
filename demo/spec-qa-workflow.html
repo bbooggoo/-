@@ -317,6 +317,8 @@
   // ===================================================================
   var CAT_ORDER = ["GAS/AIR", "POWER", "EXHAUST", "SPECIALITY GAS", "WATER", "CHEMICAL", "UPW", "폐액", "WASTE WATER"];
   var GCS_CATEGORIES = ["SPECIALITY GAS", "폐액"];
+  // 제원 항목의 수치/텍스트 스펙 필드 — 제원 DB 화면·제원표 상세·엑셀 다운로드가 모두 이 목록을 공유한다.
+  var SPEC_FIELDS = ["유량", "배관수량", "압력", "배관재질", "전력값", "부하전류", "전압", "차단기전류", "실사용량", "풍량", "포트 수량"];
 
   var MAJOR_PROCESSES = [
     "PHOTO", "CVD", "ETCH", "METAL", "CMP", "IMP", "DIFF", "PMTC", "EDS", "ANALYSIS",
@@ -663,6 +665,11 @@
     return (s !== "" && !isNaN(s) && !isNaN(parseFloat(s))) ? parseFloat(s) : raw;
   }
   function uid() { return "id" + Math.random().toString(36).slice(2) + Date.now().toString(36); }
+  // 제원 항목의 "키 필드"(성상명/전원종류/자재명 중 있는 것) — 제원 DB·제원표 상세·엑셀 다운로드가 공유한다.
+  function itemKeyField(it) {
+    var name = it.성상명 != null ? "성상명" : it.전원종류 != null ? "전원종류" : it.자재명 != null ? "자재명" : null;
+    return { name: name, value: it.성상명 || it.전원종류 || it.자재명 || "-" };
+  }
 
   // ===================================================================
   // 상태
@@ -698,6 +705,7 @@
 
   var store = null;
   var db = null;
+  var downloadsNs = null; // downloads 캐패빌리티 — 제원 DB 탭의 엑셀 다운로드 버튼에서 쓴다. null이면 다운로드 UI를 숨긴다.
 
   function currentOwner() {
     if (!state.userId) return null;
@@ -1911,18 +1919,24 @@
   var DB_ROW_LIMIT = 500;
   function renderDbPage(main) {
     var q = (state.dbSearch || "").trim().toLowerCase();
+    // PJT(상단 네비게이션)로만 좁힌 범위 — "선택한 PJT의 제원DB 전체" 다운로드와 "변경된 사항만" 다운로드가
+    // 여기 이 범위(대공정/대분류/검색 필터는 적용하지 않음)를 기준으로 삼는다. 화면 표는 이 범위에 아래
+    // dbFilterMp/dbFilterCategory/검색을 추가로 적용해 좁힌 것이다.
+    var scopedSheets = sheetList().slice().sort(function (a, b) { return a.code.localeCompare(b.code); });
+    var scopedCodes = {};
+    scopedSheets.forEach(function (s) { scopedCodes[s.code] = true; });
+    var changedCount = state.corrections.filter(function (c) { return scopedCodes[c.sheetCode]; }).length;
     var allRows = [];
-    sheetList().slice().sort(function (a, b) { return a.code.localeCompare(b.code); }).forEach(function (s) {
+    scopedSheets.forEach(function (s) {
       if (state.dbFilterMp && s.dept !== state.dbFilterMp) return;
       (s.items || []).forEach(function (it, idx) {
         if (state.dbFilterCategory && it.category !== state.dbFilterCategory) return;
-        var keyFieldName = it.성상명 != null ? "성상명" : it.전원종류 != null ? "전원종류" : it.자재명 != null ? "자재명" : null;
-        var keyField = it.성상명 || it.전원종류 || it.자재명 || "-";
+        var key = itemKeyField(it);
         if (q) {
-          var hay = (s.code + " " + keyField + " " + (it.설비모듈 || "")).toLowerCase();
+          var hay = (s.code + " " + key.value + " " + (it.설비모듈 || "")).toLowerCase();
           if (hay.indexOf(q) === -1) return;
         }
-        allRows.push({ sheet: s, it: it, idx: idx, keyField: keyField, keyFieldName: keyFieldName });
+        allRows.push({ sheet: s, it: it, idx: idx, key: key });
       });
     });
     var total = allRows.length;
@@ -1930,12 +1944,12 @@
     var tableRows = rows.map(function (r) {
       var it = r.it, s = r.sheet;
       var specBits = [];
-      ["유량", "배관수량", "압력", "배관재질", "전력값", "부하전류", "전압", "차단기전류", "실사용량", "풍량", "포트 수량"].forEach(function (f) {
+      SPEC_FIELDS.forEach(function (f) {
         if (it[f] == null) return;
         var valHtml = (typeof it[f] === "number" ? fmtNum(it[f]) : esc(it[f]));
         specBits.push(specEditSpan(s.code, r.idx, f, esc(f) + " " + valHtml));
       });
-      var keyHtml = r.keyFieldName ? specEditSpan(s.code, r.idx, r.keyFieldName, esc(r.keyField)) : esc(r.keyField);
+      var keyHtml = r.key.name ? specEditSpan(s.code, r.idx, r.key.name, esc(r.key.value)) : esc(r.key.value);
       return (
         '<tr class="clickable" data-code="' + esc(s.code) + '">' +
           "<td><a class=\"code-link\" href=\"#\" data-code=\"" + esc(s.code) + "\">" + esc(s.code) + "</a> <span class=\"chip neutral\">v" + (s.ver || 1) + "</span></td>" +
@@ -1951,6 +1965,13 @@
       '<div class="page">' +
         "<h1 style=\"font-size:19px;margin-bottom:4px\">제원 DB</h1>" +
         '<p style="font-size:12.5px;color:var(--ink-muted);margin:0 0 16px">업로드된 모든 제원표의 항목을 하나의 표(DB 조회 화면)로 봅니다. 각 행은 한 제원표 안의 항목 하나이며, 건설코드 옆 v{n}은 그 제원표의 현재 버전입니다.</p>' +
+        '<div class="panel"><div class="btn-row" style="align-items:center;flex-wrap:wrap;row-gap:8px">' +
+          '<button class="btn primary small" id="dbExportFullBtn">⬇ ' + esc(state.selectedPjt || "전체 PJT") + ' 제원DB 전체 엑셀 다운로드</button>' +
+          '<button class="btn small" id="dbExportChangedBtn"' + (changedCount ? "" : " disabled") + ">⬇ 변경된 사항만 엑셀 다운로드 (" + changedCount + "건)</button>" +
+          (downloadsNs ? "" : '<span style="font-size:11.5px;color:var(--ink-muted)">이 화면에서는 다운로드를 사용할 수 없습니다 — Claude 앱/웹에서 이 페이지를 열어 다시 시도해 주세요.</span>') +
+        "</div>" +
+        '<p style="font-size:11.5px;color:var(--ink-muted);margin:8px 0 0">두 다운로드 모두 상단 <b>PJT 선택</b>으로 좁힌 범위를 따르며, 아래 대공정/대분류/검색 필터는 화면 표시에만 적용되고 다운로드 범위에는 영향을 주지 않습니다. "변경된 사항만"은 질의 승인으로 값이 바뀐 이력(수정 전/후 값·처리자·일시)만 담습니다.</p>' +
+        "</div>" +
         '<div class="panel"><div class="filter-bar">' +
           '<div class="field"><label class="field-label">대공정</label><select id="dbMp"><option value="">전체</option>' +
             MAJOR_PROCESSES.map(function (mp) { return '<option value="' + mp + '"' + (state.dbFilterMp === mp ? " selected" : "") + ">" + mp + "</option>"; }).join("") +
@@ -1967,12 +1988,61 @@
             : '<div class="empty-state"><div class="big">🗄</div>조건에 맞는 항목이 없습니다.</div>') +
         "</div>" +
       "</div>";
+    document.getElementById("dbExportFullBtn").onclick = function () { exportSpecDbFull(scopedSheets); };
+    var changedBtn = document.getElementById("dbExportChangedBtn");
+    if (changedBtn) changedBtn.onclick = function () { exportSpecDbChanged(scopedCodes); };
     document.getElementById("dbMp").onchange = function (e) { state.dbFilterMp = e.target.value; render(); };
     document.getElementById("dbCategory").onchange = function (e) { state.dbFilterCategory = e.target.value; render(); };
     document.getElementById("dbSearch").onchange = function (e) { state.dbSearch = e.target.value; render(); };
     Array.prototype.forEach.call(main.querySelectorAll("[data-code]"), function (el) {
       el.addEventListener("click", function (e) { e.preventDefault(); openSheet(el.dataset.code); });
     });
+  }
+
+  // ---- 제원 DB 엑셀 다운로드 — downloads 캐패빌리티로 뷰어에게 저장을 요청한다 (SheetJS로 .xlsx 생성). ----
+  var DB_EXPORT_HEADERS = ["PJT", "건설코드", "버전", "대공정", "대분류", "항목구분", "항목명"].concat(SPEC_FIELDS, ["설비모듈"]);
+  var CHANGE_EXPORT_HEADERS = ["PJT", "건설코드", "버전", "대공정", "대분류", "항목명", "필드", "변경 전", "변경 후", "처리유형", "변경자", "변경일시"];
+  function pjtFileTag() { return (state.selectedPjt || "전체PJT").replace(/\s+/g, "_"); }
+  function todayTag() { return new Date().toISOString().slice(0, 10); }
+  function saveWorkbook(filename, sheetName, headers, rows) {
+    if (!downloadsNs) { alert("이 화면에서는 엑셀 다운로드를 사용할 수 없습니다. Claude 앱/웹에서 이 페이지를 열어 다시 시도해 주세요."); return; }
+    if (!rows.length) { alert("다운로드할 데이터가 없습니다."); return; }
+    var ws = XLSX.utils.aoa_to_sheet([headers].concat(rows));
+    var wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, sheetName);
+    var buf = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+    downloadsNs.save({ filename: filename, data: buf }).catch(function (e) {
+      if (e && e.code === "declined") return; // 사용자가 저장을 거절함 — 조용히 무시
+      alert("엑셀 다운로드에 실패했습니다: " + (e && e.message ? e.message : e));
+    });
+  }
+  function exportSpecDbFull(scopedSheets) {
+    var rows = [];
+    scopedSheets.forEach(function (s) {
+      (s.items || []).forEach(function (it) {
+        var key = itemKeyField(it);
+        var row = [s.pjt || "", s.code, "v" + (s.ver || 1), s.dept, it.category, key.name || "", key.value];
+        SPEC_FIELDS.forEach(function (f) { row.push(it[f] == null ? "" : it[f]); });
+        row.push(it.설비모듈 || "");
+        rows.push(row);
+      });
+    });
+    saveWorkbook("제원DB_" + pjtFileTag() + "_" + todayTag() + ".xlsx", "제원DB", DB_EXPORT_HEADERS, rows);
+  }
+  function exportSpecDbChanged(scopedCodes) {
+    var rows = state.corrections
+      .filter(function (c) { return scopedCodes[c.sheetCode]; })
+      .sort(function (a, b) { return (b.appliedAt || "").localeCompare(a.appliedAt || ""); })
+      .map(function (c) {
+        var s = state.sheets[c.sheetCode] || {};
+        var it = (s.items || [])[c.itemIdx] || {};
+        var key = itemKeyField(it);
+        return [
+          s.pjt || "", c.sheetCode, "v" + (s.ver || 1), s.dept || "", it.category || "", key.value || "",
+          c.field, c.oldValue, c.newValue, c.source === "AUTO" ? "자동 질의 승인" : "수동 질의 승인", c.appliedBy || "", fmtTime(c.appliedAt),
+        ];
+      });
+    saveWorkbook("제원DB_변경이력_" + pjtFileTag() + "_" + todayTag() + ".xlsx", "변경 이력", CHANGE_EXPORT_HEADERS, rows);
   }
 
   // ===================================================================
@@ -2561,16 +2631,15 @@
     return CAT_ORDER.filter(function (c) { return byCat[c]; }).map(function (category) {
       var rows = byCat[category].map(function (pair) {
         var it = pair.it, idx = pair.idx;
-        var keyFieldName = it.성상명 != null ? "성상명" : it.전원종류 != null ? "전원종류" : it.자재명 != null ? "자재명" : null;
-        var keyField = it.성상명 || it.전원종류 || it.자재명 || "-";
+        var key = itemKeyField(it);
         var specBits = [];
-        ["유량", "배관수량", "압력", "배관재질", "전력값", "부하전류", "전압", "차단기전류", "실사용량", "풍량", "포트 수량", "설비모듈"].forEach(function (f) {
+        SPEC_FIELDS.concat(["설비모듈"]).forEach(function (f) {
           if (it[f] == null) return;
           var valHtml = (typeof it[f] === "number" ? fmtNum(it[f]) : esc(it[f]));
           specBits.push(specEditSpan(sheetCode, idx, f, f + " <b>" + valHtml + "</b>"));
         });
         var flag = flagByItem[idx];
-        var keyHtml = keyFieldName ? specEditSpan(sheetCode, idx, keyFieldName, esc(keyField)) : esc(keyField);
+        var keyHtml = key.name ? specEditSpan(sheetCode, idx, key.name, esc(key.value)) : esc(key.value);
         return '<div class="item-row' + (flag ? " flagged-" + flag : "") + '"><span class="key">' + keyHtml + '</span><div class="specs">' + specBits.join("") + "</div></div>";
       }).join("");
       return '<div class="item-group"><div class="cat-label"><span class="swatch"></span>' + category + " · " + byCat[category].length + "건</div>" + rows + "</div>";
@@ -2785,6 +2854,7 @@
 
   if (window.claude && typeof window.claude.use === "function") {
     window.claude.use("db").then(function (dbNs) { if (dbNs) boot(dbNs); }).catch(function () {});
+    window.claude.use("downloads").then(function (ns) { if (ns) { downloadsNs = ns; if (state.page === "db") render(); } }).catch(function () {});
   }
   setTimeout(function () { if (!store.isLive) { setLive(false, "로컬 모드 (이 브라우저만)"); document.getElementById("banner").innerHTML = '<div class="banner">실시간 공유 저장소에 연결하지 못해 로컬 모드로 동작합니다. 이 브라우저 세션에서만 데이터가 유지됩니다.</div>'; } }, 3000);
 })();
