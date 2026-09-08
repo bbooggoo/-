@@ -293,6 +293,24 @@
   .pivot-chart-wrap { background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 14px; overflow-x: auto; }
   .footer-note { max-width: 1240px; margin: 4px auto 32px; padding: 0 20px; font-size: 11.5px; color: var(--ink-faint); }
   .footer-note a { color: var(--ink-muted); }
+
+  /* ---------------- AI 챗봇 (우측 하단 플로팅) ---------------- */
+  .chat-fab { position: fixed; right: 20px; bottom: 20px; z-index: 50; width: 52px; height: 52px; border-radius: 50%; background: var(--accent); color: #fff; border: none; box-shadow: var(--shadow); cursor: pointer; font-size: 22px; display: flex; align-items: center; justify-content: center; }
+  .chat-fab:hover { background: var(--accent-strong); }
+  .chat-panel { position: fixed; right: 20px; bottom: 20px; z-index: 50; width: 380px; max-width: calc(100vw - 32px); height: 540px; max-height: calc(100vh - 40px); background: var(--surface); border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--shadow); display: flex; flex-direction: column; overflow: hidden; }
+  .chat-header { padding: 12px 14px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; font-weight: 700; font-size: 13px; flex: none; }
+  .chat-header .sub { font-weight: 400; font-size: 10.5px; color: var(--ink-faint); display: block; margin-top: 1px; }
+  .chat-messages { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+  .chat-bubble { max-width: 94%; padding: 8px 11px; border-radius: 10px; font-size: 12.5px; line-height: 1.5; white-space: pre-wrap; }
+  .chat-bubble.user { align-self: flex-end; background: var(--accent); color: #fff; border-bottom-right-radius: 2px; }
+  .chat-bubble.assistant { align-self: flex-start; background: var(--surface-2); border: 1px solid var(--border); border-bottom-left-radius: 2px; }
+  .chat-bubble.assistant.error { background: var(--error-soft); color: var(--error); border-color: transparent; }
+  .chat-result-chart { overflow-x: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 8px; margin: 8px 0; }
+  .chat-result-chart svg { display: block; margin: 0 auto; width: 100%; height: auto; max-width: 320px; }
+  .chat-result-table table { width: 100%; }
+  .chat-result-table th, .chat-result-table td { padding: 4px 6px; }
+  .chat-input-row { display: flex; gap: 8px; padding: 10px; border-top: 1px solid var(--border); flex: none; }
+  .chat-input-row textarea { flex: 1; resize: none; font-family: var(--sans); font-size: 12.5px; padding: 7px 9px; }
 </style>
 
 <div class="topbar">
@@ -324,6 +342,7 @@
   유량 OVER, 성상명 표준화)·집계 로직을 브라우저에서 재현했고, 자동/수동 질의 승인 이력은 이 페이지의
   공유 저장소에 실시간으로 누적됩니다.
 </div>
+<div id="chatWidget"></div>
 
 <script>
 (function () {
@@ -721,11 +740,15 @@
     // "그래프 만들기" 탭(엑셀 피벗테이블과 같은 방식: 행/열/값/집계를 고르면 표+그래프가 바로 나온다)
     pivotRow: "dept", pivotCol: "", pivotMeasure: "유량", pivotAgg: "sum", pivotChartType: "bar",
     pivotFilterMp: "", pivotFilterCategory: "",
+    // 우측 하단 AI 챗봇 — 자연어 질문을 "그래프 만들기" 탭과 같은 피벗 조건(대분류/행/열/값/집계)으로
+    // 바꿔 표+그래프를 채팅창 안에 바로 보여준다(sample 캐패빌리티, runChatQuery 참고).
+    chatOpen: false, chatMessages: [], chatBusy: false, chatInput: "",
   };
 
   var store = null;
   var db = null;
   var downloadsNs = null; // downloads 캐패빌리티 — 제원 DB 탭의 엑셀 다운로드 버튼에서 쓴다. null이면 다운로드 UI를 숨긴다.
+  var sampleNs = null; // sample 캐패빌리티 — 우측 하단 AI 챗봇에서 자연어 질문을 해석하는 데 쓴다. null이면 챗봇에 안내 메시지만 보여준다.
 
   function currentOwner() {
     if (!state.userId) return null;
@@ -2199,6 +2222,13 @@
     if (v == null) return "-";
     return Number.isInteger(v) ? v.toLocaleString("ko-KR") : fmtNum(v);
   }
+  // 그래프(막대/원형) 안 눈금·값 라벨 전용 — 소수점 없이 정수로 반올림해 표기한다(표/엑셀 다운로드는
+  // fmtPivotVal로 기존 정밀도를 그대로 유지한다). 그래프에서는 소수점을 보이지 않게 하고 값을 숫자로
+  // 직접 표기해 달라는 요청에 따른 것이다.
+  function fmtChartVal(v) {
+    if (v == null) return "-";
+    return Math.round(v).toLocaleString("ko-KR");
+  }
   // 파이차트는 슬라이스마다 색으로 항목을 구분하므로(정체성 인코딩) 팔레트 8슬롯을 넘지 않도록,
   // 이미 계산된 피벗의 행을 상위 7개 + "기타"로 한 번 더 접는다(표/막대그래프는 그대로 40개까지 허용).
   function capRowsForPie(pivot) {
@@ -2276,7 +2306,7 @@
       var tv = domainMin + (range * t / ticks);
       var ty = yFor(tv);
       p.push('<line x1="' + marginL + '" y1="' + ty + '" x2="' + (marginL + plotW) + '" y2="' + ty + '" stroke="var(--border)" stroke-width="1"/>');
-      p.push('<text x="' + (marginL - 8) + '" y="' + (ty + 4) + '" text-anchor="end" font-size="10.5" fill="var(--ink-faint)" font-family="var(--mono)">' + esc(fmtPivotVal(tv)) + "</text>");
+      p.push('<text x="' + (marginL - 8) + '" y="' + (ty + 4) + '" text-anchor="end" font-size="10.5" fill="var(--ink-faint)" font-family="var(--mono)">' + esc(fmtChartVal(tv)) + "</text>");
     }
     var barGap = 2;
     var barW = Math.max(4, (groupW - 10) / seriesCount - barGap);
@@ -2292,6 +2322,12 @@
         var label = (pivot.hasCol ? pivot.colVals[si] + " · " : "") + rv + ": " + fmtPivotVal(v);
         var d = barPathD(x, top, barW, h, Math.min(4, barW / 2, h));
         if (d) p.push('<path fill="' + color + '" d="' + d + '"><title>' + esc(label) + "</title></path>");
+        // 막대 위(음수면 아래)에 값을 정수로 직접 표기한다 — 계열이 너무 촘촘해(barW<14px) 라벨끼리
+        // 겹칠 상황에서만 생략한다(선택적 라벨 원칙).
+        if (d && barW >= 14) {
+          var lblY = v >= 0 ? (top - 4) : (top + h + 11);
+          p.push('<text x="' + (x + barW / 2) + '" y="' + lblY + '" text-anchor="middle" font-size="9.5" fill="var(--ink-muted)" font-family="var(--mono)">' + esc(fmtChartVal(v)) + "</text>");
+        }
       }
       var lx = gx + (groupW - 12) / 2;
       var short = rv.length > 9 ? rv.slice(0, 8) + "…" : rv;
@@ -2321,6 +2357,15 @@
       var color = "var(--series-" + ((i % 8) + 1) + ")";
       var pct = Math.round(frac * 1000) / 10;
       p.push('<path d="' + d + '" fill="' + color + '" stroke="var(--surface)" stroke-width="2"><title>' + esc(lab + ": " + fmtPivotVal(v) + " (" + pct + "%)") + "</title></path>");
+      // 슬라이스가 너무 작으면(겹침 방지, 선택적 라벨 원칙) 값을 생략한다. 팔레트 어느 색 위에서도
+      // 읽히도록 흰 글자 + 어두운 외곽선(halo)을 쓴다 — 슬라이스 색을 직접 텍스트 색으로 쓰지 않는다.
+      if (frac >= 0.045) {
+        var mid = (a0 + a1) / 2, lr = r * 0.62;
+        var lx = cx + lr * Math.cos(mid), ly = cy + lr * Math.sin(mid);
+        var showPct = frac >= 0.08;
+        p.push('<text x="' + lx + '" y="' + (showPct ? ly - 5 : ly) + '" text-anchor="middle" font-size="11" font-weight="700" fill="#fff" stroke="rgba(0,0,0,0.45)" stroke-width="3" paint-order="stroke fill" font-family="var(--mono)">' + esc(fmtChartVal(v)) + "</text>");
+        if (showPct) p.push('<text x="' + lx + '" y="' + (ly + 9) + '" text-anchor="middle" font-size="9" fill="#fff" stroke="rgba(0,0,0,0.45)" stroke-width="2.5" paint-order="stroke fill">' + pct + "%</text>");
+      }
     });
     var svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + W + " " + H + '" width="' + W + '" height="' + H + '" role="img" aria-label="피벗 원형그래프">' + p.join("") + "</svg>";
     return { svg: svg, width: W, height: H };
@@ -2348,8 +2393,10 @@
     Object.keys(map).forEach(function (k) { out = out.split(k).join(map[k]); });
     return out;
   }
-  function renderPivotPage(main) {
-    var rows = pivotFilteredRows();
+  // ---- 피벗 선택값 정규화 — 행/열 중복 방지, 대분류에 맞는 값(Values) 자동 보정, 파이는 열이 없을
+  // 때만 등 renderPivotPage가 쓰던 보정 규칙을 한 곳에 모았다. AI 챗봇(runChatQuery)도 자연어 질문을
+  // state.pivot*에 반영한 뒤 이 함수로 같은 보정을 거쳐 화면과 완전히 같은 결과를 만든다. ----
+  function normalizePivotState() {
     var rowKey = state.pivotRow || "dept";
     var colKey = state.pivotCol || "";
     if (colKey === rowKey) colKey = state.pivotCol = ""; // 같은 필드를 행/열에 동시에 못 고르게 한다
@@ -2360,8 +2407,15 @@
     if (measureKey !== "__count__" && measureFields.indexOf(measureKey) === -1) measureKey = measureFields[0];
     state.pivotMeasure = measureKey;
     var agg = measureKey === "__count__" ? "count" : (state.pivotAgg || "sum");
+    state.pivotAgg = agg;
     if (colKey && state.pivotChartType === "pie") state.pivotChartType = "bar"; // 파이는 열이 없을 때만
     var chartType = state.pivotChartType || "bar";
+    return { rowKey: rowKey, colKey: colKey, measureKey: measureKey, agg: agg, chartType: chartType, measureFields: measureFields };
+  }
+  function renderPivotPage(main) {
+    var rows = pivotFilteredRows();
+    var norm = normalizePivotState();
+    var rowKey = norm.rowKey, colKey = norm.colKey, measureKey = norm.measureKey, agg = norm.agg, chartType = norm.chartType, measureFields = norm.measureFields;
     var measureLabel = measureKey === "__count__" ? "건수" : measureKey;
     var pivot = computePivot(rows, rowKey, colKey, measureKey, agg);
     var rowDimLabel = pivotDimLabel(rowKey);
@@ -2554,6 +2608,193 @@
     if (!el) return;
     el.textContent = msg;
     el.style.color = isError ? "var(--error)" : "var(--ok)";
+  }
+
+  // ===================================================================
+  // AI 챗봇 (우측 하단) — 자연어 질문("P5 ph1의 GAS/AIR 성상별 제원집계를 표랑 그래프로")을 sample
+  // 캐패빌리티로 "그래프 만들기" 탭과 같은 피벗 조건(pjt/대공정/대분류/행/열/값/집계)으로 해석시킨 뒤,
+  // computePivot()을 그대로 재사용해 채팅창 안에 작은 표+그래프를 바로 그린다. state.pivot*를 실제로
+  // 갱신하므로 "그래프 만들기 탭에서 크게 보기"를 누르면 같은 조건이 그대로 이어진다.
+  // ===================================================================
+  function buildChatPrompt(question) {
+    var pjtList = pjtOptions().join(", ");
+    var deptList = MAJOR_PROCESSES.join(", ");
+    var catList = CAT_ORDER.join(", ");
+    var dimList = PIVOT_DIMENSIONS.map(function (d) { return d.key + "(" + d.label + ")"; }).join(", ");
+    var measureNote = CAT_ORDER.map(function (c) { return c + ": " + AGG_SPECS[c].fields.join("/"); }).join(" · ");
+    return (
+      "당신은 반도체 플랜트 \"제원 질의 데스크\" 앱의 AI 어시스턴트입니다. 사용자의 한국어 질문을 분석해서, " +
+      "표+그래프(피벗) 화면을 만들 조건을 JSON 하나로만 답하세요. 다른 설명 문장은 절대 포함하지 마세요.\n\n" +
+      "사용 가능한 값:\n" +
+      "- pjt (사업장·단계, 질문에 없으면 null): " + pjtList + "\n" +
+      "- dept (대공정, 질문에 없으면 null): " + deptList + "\n" +
+      "- category (대분류, 질문에 없으면 null): " + catList + "\n" +
+      "- rowKey / colKey (행/열 기준 — colKey는 질문에 없으면 null): " + dimList + "\n" +
+      "  \"성상별\"·\"자재별\"·\"전원종류별\"·\"항목별\"은 keyField를 쓰세요.\n" +
+      "- measure (값 필드 — 대분류별로 제원집계 로직(위 대분류: 필드 목록)이 쓰는 필드만 유효합니다. " +
+        "대분류를 함께 정하세요): " + measureNote + " (또는 개수를 세는 \"__count__\")\n" +
+      "- agg (집계 방식): sum(합계) / avg(평균) / count(개수) / max(최대) / min(최소)\n" +
+      "- chartType: bar(막대) 또는 pie(원형 — colKey가 없을 때만 가능)\n\n" +
+      "다음 JSON 스키마로만 답하세요(설명 문장 없이 JSON 객체 하나만):\n" +
+      '{"pjt": string|null, "dept": string|null, "category": string|null, "rowKey": string, "colKey": string|null, "measure": string, "agg": string, "chartType": "bar"|"pie", "answer": string}\n' +
+      '"answer"는 사용자에게 보여줄 한두 문장의 한국어 설명입니다.\n\n' +
+      "예시 — 질문: \"P5 ph1의 GAS/AIR의 성상별 제원집계를 표랑 그래프로 반환해줘\" 라면:\n" +
+      '{"pjt":"P5 ph1","dept":null,"category":"GAS/AIR","rowKey":"keyField","colKey":null,"measure":"유량","agg":"sum","chartType":"bar","answer":"P5 ph1의 GAS/AIR 성상별 유량 합계를 표와 그래프로 보여드립니다."}\n\n' +
+      "사용자 질문: " + question
+    );
+  }
+  // 챗봇이 돌려준 JSON을 신뢰하지 않고(런타임에서 검증되지 않음) 알려진 값 목록에 맞춰 다시 확인한다 —
+  // 목록에 없는 값은 조용히 무시하고 normalizePivotState()의 기본 보정에 맡긴다.
+  function applyChatParsedToState(parsed) {
+    var pjtList = pjtOptions();
+    var pjt = typeof parsed.pjt === "string" ? parsed.pjt.trim() : "";
+    if (pjt && pjtList.indexOf(pjt) !== -1) state.selectedPjt = pjt;
+    var deptRaw = typeof parsed.dept === "string" ? parsed.dept.trim().toUpperCase() : "";
+    var deptMatch = MAJOR_PROCESSES.filter(function (mp) { return mp.toUpperCase() === deptRaw; })[0];
+    state.pivotFilterMp = deptMatch || "";
+    var catRaw = typeof parsed.category === "string" ? parsed.category.trim().toUpperCase() : "";
+    var catMatch = CAT_ORDER.filter(function (c) { return c.toUpperCase() === catRaw; })[0];
+    state.pivotFilterCategory = catMatch || "";
+    var rowKey = typeof parsed.rowKey === "string" ? parsed.rowKey.trim() : "";
+    state.pivotRow = PIVOT_DIMENSIONS.some(function (d) { return d.key === rowKey; }) ? rowKey : (catMatch ? "keyField" : "dept");
+    var colKey = typeof parsed.colKey === "string" ? parsed.colKey.trim() : "";
+    state.pivotCol = PIVOT_DIMENSIONS.some(function (d) { return d.key === colKey; }) ? colKey : "";
+    var measure = typeof parsed.measure === "string" ? parsed.measure.trim() : "";
+    var allowedMeasures = pivotMeasureFieldsFor(catMatch).concat(["__count__"]);
+    state.pivotMeasure = allowedMeasures.indexOf(measure) !== -1 ? measure : allowedMeasures[0];
+    var agg = typeof parsed.agg === "string" ? parsed.agg.trim() : "";
+    state.pivotAgg = ["sum", "avg", "count", "max", "min"].indexOf(agg) !== -1 ? agg : "sum";
+    var chartType = typeof parsed.chartType === "string" ? parsed.chartType.trim() : "";
+    state.pivotChartType = chartType === "pie" ? "pie" : "bar";
+  }
+  function renderChatTableFromAoa(aoa) {
+    var CHAT_ROW_LIMIT = 12;
+    var headHtml = "<tr>" + aoa.headers.map(function (h) { return "<th>" + esc(h) + "</th>"; }).join("") + "</tr>";
+    var bodyHtml = aoa.rows.slice(0, CHAT_ROW_LIMIT).map(function (r) {
+      // 표(엑셀 다운로드)용 aoa는 정밀도를 유지한 원본 숫자를 담고 있으므로, 화면 표시는 다른 표들과
+      // 마찬가지로 fmtPivotVal로 다시 포맷한다(부동소수점 오차가 그대로 노출되는 것을 막는다).
+      return "<tr>" + r.map(function (v, i) { return '<td class="' + (i === 0 ? "" : "num") + '">' + esc(i === 0 ? v : fmtPivotVal(v === "" ? null : v)) + "</td>"; }).join("") + "</tr>";
+    }).join("");
+    var moreNote = aoa.rows.length > CHAT_ROW_LIMIT
+      ? '<p style="font-size:10.5px;color:var(--ink-faint);margin:4px 0 0">외 ' + (aoa.rows.length - CHAT_ROW_LIMIT) + '행 더 있음 — "그래프 만들기" 탭에서 전체 확인</p>' : "";
+    return '<div class="chat-result-table pivot-table" style="overflow-x:auto"><table><thead>' + headHtml + "</thead><tbody>" + bodyHtml + "</tbody></table></div>" + moreNote;
+  }
+  // 챗봇 질문 하나를 "그래프 만들기"와 완전히 같은 파이프라인(pivotFilteredRows → computePivot →
+  // 표/그래프 렌더)으로 처리한다. sample.json이 돌려준 조건을 state.pivot*에 실제로 반영하므로,
+  // 채팅 결과의 "탭에서 크게 보기" 버튼을 누르면 그 질문 당시의 조건이 그대로 이어진다(메시지에
+  // pivotParams로 스냅샷을 남겨, 이후 다른 질문으로 state가 다시 바뀌어도 그 메시지 버튼은 자기
+  // 질문 당시 조건을 되살린다).
+  function runChatQuery(question) {
+    if (!sampleNs) {
+      return Promise.resolve({
+        role: "assistant", error: true,
+        text: "이 화면에서는 AI 챗봇을 사용할 수 없습니다. Claude 앱/웹에서 이 페이지를 열어 다시 시도해 주세요. 그동안은 \"그래프 만들기\" 탭에서 직접 조건을 골라 보세요.",
+      });
+    }
+    var prompt = buildChatPrompt(question);
+    return sampleNs.json(prompt, { cache: false }).then(function (parsed) {
+      applyChatParsedToState(parsed && typeof parsed === "object" ? parsed : {});
+      var norm = normalizePivotState();
+      var rows = pivotFilteredRows();
+      var pivot = computePivot(rows, norm.rowKey, norm.colKey, norm.measureKey, norm.agg);
+      var rowDimLabel = pivotDimLabel(norm.rowKey);
+      var measureLabel = norm.measureKey === "__count__" ? "건수" : norm.measureKey;
+      var aoa = pivotTableAoA(pivot, rowDimLabel, measureLabel);
+      var chartForRender = norm.chartType === "pie" ? capRowsForPie(pivot) : pivot;
+      var chart = pivot.rowVals.length ? (norm.chartType === "pie" ? drawPivotPie(chartForRender) : drawPivotBar(pivot, 320)) : null;
+      var title = rowDimLabel + (norm.colKey ? " × " + pivotDimLabel(norm.colKey) : "") + " · " + measureLabel + (norm.measureKey === "__count__" ? "" : " " + PIVOT_AGG_LABEL[norm.agg]);
+      var answerText = (parsed && typeof parsed.answer === "string" && parsed.answer.trim()) ? parsed.answer.trim() : "요청하신 조건으로 표와 그래프를 만들었습니다.";
+      return {
+        role: "assistant", text: answerText,
+        pivot: { aoa: aoa, chart: chart, title: title },
+        pivotParams: {
+          selectedPjt: state.selectedPjt, pivotFilterMp: state.pivotFilterMp, pivotFilterCategory: state.pivotFilterCategory,
+          pivotRow: state.pivotRow, pivotCol: state.pivotCol, pivotMeasure: state.pivotMeasure, pivotAgg: state.pivotAgg, pivotChartType: state.pivotChartType,
+        },
+      };
+    }).catch(function (e) {
+      var code = e && e.code;
+      var msg =
+        code === "not_granted" ? "AI 기능 사용을 허용하지 않으셨습니다. 대신 \"그래프 만들기\" 탭에서 직접 조건을 선택해 주세요."
+        : code === "rate_limited" ? "요청이 많아 잠시 후 다시 시도해 주세요."
+        : code === "invalid_json" ? "질문을 이해하지 못했습니다. 예: \"P5 ph1의 GAS/AIR 성상별 유량 합계를 표와 그래프로\" 처럼 좀 더 구체적으로 물어봐 주세요."
+        : "요청 처리 중 문제가 발생했습니다 (" + (e && e.message ? e.message : e) + "). \"그래프 만들기\" 탭에서 직접 시도해 주세요.";
+      return { role: "assistant", error: true, text: msg };
+    });
+  }
+  function renderChatMessage(m, idx) {
+    var cls = "chat-bubble " + (m.role === "user" ? "user" : "assistant") + (m.error ? " error" : "");
+    var body = esc(m.text).replace(/\n/g, "<br>");
+    var resultHtml = "";
+    if (m.pivot) {
+      resultHtml =
+        '<div style="margin-top:8px">' +
+          '<div style="font-size:10.5px;color:var(--ink-faint);margin-bottom:4px">' + esc(m.pivot.title) + "</div>" +
+          (m.pivot.chart ? '<div class="chat-result-chart">' + m.pivot.chart.svg + "</div>" : "") +
+          renderChatTableFromAoa(m.pivot.aoa) +
+          (m.pivotParams ? '<div style="margin-top:6px"><button class="btn small chat-open-pivot-btn" data-msg-idx="' + idx + '">📊 그래프 만들기 탭에서 크게 보기</button></div>' : "") +
+        "</div>";
+    }
+    return '<div class="' + cls + '">' + body + resultHtml + "</div>";
+  }
+  function sendChatMessage() {
+    if (state.chatBusy) return;
+    var box = document.getElementById("chatInputBox");
+    var text = ((box && box.value) || "").trim();
+    if (!text) return;
+    state.chatMessages.push({ role: "user", text: text });
+    state.chatInput = "";
+    state.chatBusy = true;
+    renderChatWidget();
+    runChatQuery(text).then(function (msg) {
+      state.chatMessages.push(msg);
+    }).catch(function (e) {
+      state.chatMessages.push({ role: "assistant", error: true, text: "오류가 발생했습니다: " + (e && e.message ? e.message : e) });
+    }).then(function () {
+      state.chatBusy = false;
+      renderChatWidget();
+    });
+  }
+  function renderChatWidget() {
+    var el = document.getElementById("chatWidget");
+    if (!el) return;
+    if (!state.chatOpen) {
+      el.innerHTML = '<button class="chat-fab" id="chatFabBtn" title="AI 챗봇 (제원 질의)">💬</button>';
+      document.getElementById("chatFabBtn").onclick = function () {
+        state.chatOpen = true; renderChatWidget();
+        var box = document.getElementById("chatInputBox"); if (box) box.focus();
+      };
+      return;
+    }
+    var msgsHtml = state.chatMessages.length
+      ? state.chatMessages.map(renderChatMessage).join("")
+      : '<div style="font-size:12px;color:var(--ink-faint);padding:6px 2px">예: "P5 ph1의 GAS/AIR 성상별 제원집계를 표랑 그래프로 보여줘" 처럼 자연어로 물어보세요.</div>';
+    el.innerHTML =
+      '<div class="chat-panel">' +
+        '<div class="chat-header"><span>💬 AI 챗봇<span class="sub">제원 집계를 표/그래프로 물어보세요</span></span><button class="btn small" id="chatCloseBtn" style="padding:2px 8px">✕</button></div>' +
+        '<div class="chat-messages" id="chatMessagesArea">' + msgsHtml + (state.chatBusy ? '<div class="chat-bubble assistant">생각 중...</div>' : "") + "</div>" +
+        '<div class="chat-input-row">' +
+          '<textarea id="chatInputBox" rows="1" placeholder="예: P5 ph1의 GAS/AIR 성상별 유량 합계를 표와 그래프로"' + (state.chatBusy ? " disabled" : "") + ">" + esc(state.chatInput) + "</textarea>" +
+          '<button class="btn primary small" id="chatSendBtn"' + (state.chatBusy ? " disabled" : "") + ">보내기</button>" +
+        "</div>" +
+      "</div>";
+    document.getElementById("chatCloseBtn").onclick = function () { state.chatOpen = false; renderChatWidget(); };
+    var box = document.getElementById("chatInputBox");
+    // 값은 state.chatInput에 매 입력마다 동기화해 둔다(별도 render() 호출 없이) — 이 앱은 다른 접속자의
+    // 실시간 DB 변경만으로도 전체가 자주 다시 그려지므로, 그 사이 입력 중이던 초안이 사라지지 않게 한다.
+    box.oninput = function (e) { state.chatInput = e.target.value; };
+    box.onkeydown = function (e) { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChatMessage(); } };
+    document.getElementById("chatSendBtn").onclick = sendChatMessage;
+    Array.prototype.forEach.call(el.querySelectorAll(".chat-open-pivot-btn"), function (b) {
+      b.onclick = function () {
+        var m = state.chatMessages[+b.dataset.msgIdx];
+        if (m && m.pivotParams) Object.assign(state, m.pivotParams);
+        state.chatOpen = false; // 큰 화면(탭)에서 보도록 챗봇 패널은 접어 준다
+        goPage("pivot");
+      };
+    });
+    var area = document.getElementById("chatMessagesArea");
+    if (area) area.scrollTop = area.scrollHeight;
   }
 
   // ===================================================================
@@ -3357,6 +3598,7 @@
     else if (state.page === "upload") renderUploadPage(main);
     else if (state.page === "owners") renderOwnersPage(main);
     else if (state.page === "sheet") renderSheetPage(main);
+    renderChatWidget(); // 우측 하단 AI 챗봇 — 어느 탭이든 항상 떠 있어야 하므로 페이지 분기와 무관하게 매번 다시 그린다
   }
 
   store = makeLocalStore();
@@ -3367,6 +3609,7 @@
   if (window.claude && typeof window.claude.use === "function") {
     window.claude.use("db").then(function (dbNs) { if (dbNs) boot(dbNs); }).catch(function () {});
     window.claude.use("downloads").then(function (ns) { if (ns) { downloadsNs = ns; if (state.page === "db" || state.page === "pivot") render(); } }).catch(function () {});
+    window.claude.use("sample").then(function (ns) { if (ns) sampleNs = ns; }).catch(function () {});
   }
   setTimeout(function () { if (!store.isLive) { setLive(false, "로컬 모드 (이 브라우저만)"); document.getElementById("banner").innerHTML = '<div class="banner">실시간 공유 저장소에 연결하지 못해 로컬 모드로 동작합니다. 이 브라우저 세션에서만 데이터가 유지됩니다.</div>'; } }, 3000);
 })();
