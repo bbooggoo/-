@@ -24,6 +24,11 @@
     --error-soft: #fbe6e1;
     --role-admin: #6a4c93;
     --role-admin-soft: #ece3f5;
+    /* "그래프 만들기" 탭 피벗 차트의 계열(series) 색상 — dataviz 스킬의 검증된 기본 팔레트(카테고리
+       8슬롯, CVD-safe 순서 고정)를 그대로 쓴다. 계열이 8개를 넘으면 나머지는 "기타"로 묶어 9번째
+       색을 새로 만들지 않는다. */
+    --series-1: #2a78d6; --series-2: #eb6834; --series-3: #1baf7a; --series-4: #eda100;
+    --series-5: #e87ba4; --series-6: #008300; --series-7: #4a3aa7; --series-8: #e34948;
     --shadow: 0 1px 2px rgba(15,36,41,0.06), 0 8px 24px -12px rgba(15,36,41,0.18);
     --sans: "IBM Plex Sans", "IBM Plex Sans KR", -apple-system, "Malgun Gothic", sans-serif;
     --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, monospace;
@@ -39,6 +44,8 @@
       --warn: #dba24d; --warn-soft: #3a2c15;
       --error: #e28374; --error-soft: #3a1f19;
       --role-admin: #b79ce0; --role-admin-soft: #2b2140;
+      --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70; --series-4: #c98500;
+      --series-5: #d55181; --series-6: #008300; --series-7: #9085e9; --series-8: #e66767;
       --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px -12px rgba(0,0,0,0.5);
       color-scheme: dark;
     }
@@ -52,6 +59,8 @@
     --warn: #dba24d; --warn-soft: #3a2c15;
     --error: #e28374; --error-soft: #3a1f19;
     --role-admin: #b79ce0; --role-admin-soft: #2b2140;
+    --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70; --series-4: #c98500;
+    --series-5: #d55181; --series-6: #008300; --series-7: #9085e9; --series-8: #e66767;
     --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px -12px rgba(0,0,0,0.5);
     color-scheme: dark;
   }
@@ -274,6 +283,14 @@
   .upload-result-error { background: var(--error-soft); color: var(--error); border-radius: 8px; padding: 9px 13px; font-size: 12.5px; }
   .upload-result-warn { font-size: 12px; color: var(--warn); margin: 0 0 8px; padding-left: 18px; }
 
+  /* ---------------- 그래프 만들기 (피벗) ---------------- */
+  .pivot-table { width: 100%; font-size: 12.5px; border-collapse: collapse; }
+  .pivot-table th, .pivot-table td { padding: 7px 10px; border-bottom: 1px solid var(--border); text-align: left; white-space: nowrap; }
+  .pivot-table td.num { text-align: right; font-family: var(--mono); }
+  .pivot-table thead th { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--ink-faint); font-weight: 600; border-bottom: 1px solid var(--border-strong); }
+  .pivot-table tr.total td { font-weight: 700; border-top: 1px dashed var(--border-strong); background: var(--surface-2); }
+  .pivot-chart-wrap svg { display: block; margin: 0 auto; max-width: 100%; }
+  .pivot-chart-wrap { background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 14px; overflow-x: auto; }
   .footer-note { max-width: 1240px; margin: 4px auto 32px; padding: 0 20px; font-size: 11.5px; color: var(--ink-faint); }
   .footer-note a { color: var(--ink-muted); }
 </style>
@@ -701,6 +718,9 @@
     guideDraft: null, // 편집 중인 초안(저장 전까지는 로컬에만 존재, 취소하면 버림)
     guideSaving: false,
     guideSaveError: null,
+    // "그래프 만들기" 탭(엑셀 피벗테이블과 같은 방식: 행/열/값/집계를 고르면 표+그래프가 바로 나온다)
+    pivotRow: "dept", pivotCol: "", pivotMeasure: "유량", pivotAgg: "sum", pivotChartType: "bar",
+    pivotFilterMp: "", pivotFilterCategory: "",
   };
 
   var store = null;
@@ -1307,6 +1327,7 @@
     { id: "guide", label: "업무 가이드" },
     { id: "dashboard", label: "대시보드" },
     { id: "db", label: "제원 DB" },
+    { id: "pivot", label: "그래프 만들기" },
     { id: "summary", label: "SUMMARY" },
     { id: "queries", label: "질의응답" },
     { id: "upload", label: "제원표 업로드" },
@@ -2043,6 +2064,482 @@
         ];
       });
     saveWorkbook("제원DB_변경이력_" + pjtFileTag() + "_" + todayTag() + ".xlsx", "변경 이력", CHANGE_EXPORT_HEADERS, rows);
+  }
+
+  // ===================================================================
+  // 그래프 만들기 (피벗) — 엑셀 피벗테이블처럼 행/열/값/집계를 고르면 표와 그래프가 함께 나온다.
+  // 데이터 범위는 제원 DB 탭과 마찬가지로 상단 PJT 선택을 따르고(sheetList()), 이 탭 자체의
+  // 대공정/대분류 필터로 한 번 더 좁힐 수 있다. 표/그래프는 항상 pivotFilteredRows()에서 매번 다시
+  // 계산한다(다른 탭과 동일한 "캐시 없이 매번 재계산" 원칙).
+  // ===================================================================
+  var PIVOT_DIMENSIONS = [
+    { key: "pjt", label: "PJT" },
+    { key: "dept", label: "대공정" },
+    { key: "category", label: "대분류" },
+    { key: "keyField", label: "항목명(성상명/전원종류/자재명)" },
+    { key: "equip", label: "설비모듈" },
+    { key: "code", label: "건설코드" },
+  ];
+  function pivotDimLabel(key) { var d = PIVOT_DIMENSIONS.filter(function (x) { return x.key === key; })[0]; return d ? d.label : key; }
+  var PIVOT_AGG_LABEL = { sum: "합계", avg: "평균", count: "개수", max: "최대", min: "최소" };
+  var MAX_PIVOT_GROUPS = 40; // 표/그래프가 감당할 수 있는 행 상한 — 넘으면 나머지를 "기타"로 묶는다
+  var MAX_PIVOT_SERIES = 8;  // 팔레트 계열(series) 슬롯 수와 맞춘 열(계열) 상한
+  function pivotSourceRows() {
+    var rows = [];
+    sheetList().forEach(function (s) {
+      (s.items || []).forEach(function (it) {
+        var key = itemKeyField(it);
+        var row = { pjt: s.pjt || "(미지정)", code: s.code, dept: s.dept, category: it.category, keyField: key.value, equip: it.설비모듈 || "(미지정)" };
+        SPEC_FIELDS.forEach(function (f) { row[f] = typeof it[f] === "number" ? it[f] : null; });
+        rows.push(row);
+      });
+    });
+    return rows;
+  }
+  function pivotFilteredRows() {
+    return pivotSourceRows().filter(function (r) {
+      if (state.pivotFilterMp && r.dept !== state.pivotFilterMp) return false;
+      if (state.pivotFilterCategory && r.category !== state.pivotFilterCategory) return false;
+      return true;
+    });
+  }
+  // rowKey/colKey: PIVOT_DIMENSIONS의 key. measureKey: SPEC_FIELDS 중 하나 또는 "__count__"(건수).
+  function computePivot(rows, rowKey, colKey, measureKey, agg) {
+    var effAgg = measureKey === "__count__" ? "count" : agg;
+    function aggArr(arr) {
+      if (!arr || !arr.length) return null;
+      if (effAgg === "sum") return arr.reduce(function (a, b) { return a + b; }, 0);
+      if (effAgg === "avg") return arr.reduce(function (a, b) { return a + b; }, 0) / arr.length;
+      if (effAgg === "count") return arr.length;
+      if (effAgg === "max") return Math.max.apply(null, arr);
+      if (effAgg === "min") return Math.min.apply(null, arr);
+      return null;
+    }
+    function flatten(obj) { var all = []; Object.keys(obj || {}).forEach(function (k) { all = all.concat(obj[k]); }); return all; }
+
+    var cells = {}; // rowVal -> colVal -> number[]
+    rows.forEach(function (r) {
+      var rv = r[rowKey]; rv = (rv == null || rv === "") ? "(미지정)" : String(rv);
+      var cv = colKey ? (function () { var v = r[colKey]; return (v == null || v === "") ? "(미지정)" : String(v); })() : "__ALL__";
+      var val = measureKey === "__count__" ? 1 : r[measureKey];
+      if (measureKey !== "__count__" && (val == null || typeof val !== "number")) return;
+      cells[rv] = cells[rv] || {};
+      (cells[rv][cv] = cells[rv][cv] || []).push(val);
+    });
+
+    // 행이 너무 많으면(예: 건설코드) 중요도(전체 집계값의 절대값) 상위 MAX_PIVOT_GROUPS개만 남기고
+    // 나머지는 "기타"로 합쳐 표/그래프가 항상 읽을 수 있는 크기로 유지한다.
+    var rowRank = Object.keys(cells).map(function (rv) { return { rv: rv, total: aggArr(flatten(cells[rv])) || 0 }; })
+      .sort(function (a, b) { return Math.abs(b.total) - Math.abs(a.total); });
+    var overflowRows = rowRank.slice(MAX_PIVOT_GROUPS);
+    var keptRowKeys = rowRank.slice(0, MAX_PIVOT_GROUPS).map(function (x) { return x.rv; });
+    if (overflowRows.length) {
+      var rowEtcLabel = "기타 (" + overflowRows.length + "개 묶음)";
+      var rowEtcCells = cells[rowEtcLabel] = {};
+      overflowRows.forEach(function (x) {
+        Object.keys(cells[x.rv]).forEach(function (cv) { (rowEtcCells[cv] = rowEtcCells[cv] || []).push.apply(rowEtcCells[cv], cells[x.rv][cv]); });
+        delete cells[x.rv];
+      });
+      keptRowKeys.push(rowEtcLabel);
+    }
+    var rowVals = keptRowKeys.sort(function (a, b) {
+      var aEtc = a.indexOf("기타 (") === 0, bEtc = b.indexOf("기타 (") === 0;
+      if (aEtc !== bEtc) return aEtc ? 1 : -1;
+      return a.localeCompare(b, "ko");
+    });
+
+    var colVals;
+    if (!colKey) {
+      colVals = ["__ALL__"];
+    } else {
+      var colSeen = {};
+      rowVals.forEach(function (rv) { Object.keys(cells[rv] || {}).forEach(function (cv) { colSeen[cv] = true; }); });
+      var colRank = Object.keys(colSeen).map(function (cv) {
+        var total = 0; rowVals.forEach(function (rv) { total += aggArr((cells[rv] || {})[cv]) || 0; });
+        return { cv: cv, total: total };
+      }).sort(function (a, b) { return Math.abs(b.total) - Math.abs(a.total); });
+      var keptCols = colRank.slice(0, MAX_PIVOT_SERIES).map(function (x) { return x.cv; });
+      var overflowCols = colRank.slice(MAX_PIVOT_SERIES).map(function (x) { return x.cv; });
+      if (overflowCols.length) {
+        var colEtcLabel = "기타(" + overflowCols.length + ")";
+        rowVals.forEach(function (rv) {
+          var merged = [];
+          overflowCols.forEach(function (cv) { if (cells[rv][cv]) { merged = merged.concat(cells[rv][cv]); delete cells[rv][cv]; } });
+          if (merged.length) cells[rv][colEtcLabel] = (cells[rv][colEtcLabel] || []).concat(merged);
+        });
+        keptCols.push(colEtcLabel);
+      }
+      colVals = keptCols.sort(function (a, b) {
+        var aEtc = a.indexOf("기타(") === 0, bEtc = b.indexOf("기타(") === 0;
+        if (aEtc !== bEtc) return aEtc ? 1 : -1;
+        return a.localeCompare(b, "ko");
+      });
+    }
+
+    var matrix = rowVals.map(function (rv) { return colVals.map(function (cv) { return aggArr((cells[rv] || {})[cv]); }); });
+    var rowTotals = rowVals.map(function (rv) { return aggArr(flatten(cells[rv])); });
+    var colTotals = colVals.map(function (cv) {
+      var all = []; rowVals.forEach(function (rv) { all = all.concat((cells[rv] || {})[cv] || []); }); return aggArr(all);
+    });
+    var grandTotal = aggArr(rowVals.reduce(function (acc, rv) { return acc.concat(flatten(cells[rv])); }, []));
+    return {
+      rowVals: rowVals, colVals: colVals, hasCol: !!colKey, matrix: matrix,
+      rowTotals: rowTotals, colTotals: colTotals, grandTotal: grandTotal, rowOverflow: overflowRows.length,
+    };
+  }
+  function fmtPivotVal(v) {
+    if (v == null) return "-";
+    return Number.isInteger(v) ? v.toLocaleString("ko-KR") : fmtNum(v);
+  }
+  // 파이차트는 슬라이스마다 색으로 항목을 구분하므로(정체성 인코딩) 팔레트 8슬롯을 넘지 않도록,
+  // 이미 계산된 피벗의 행을 상위 7개 + "기타"로 한 번 더 접는다(표/막대그래프는 그대로 40개까지 허용).
+  function capRowsForPie(pivot) {
+    if (pivot.rowVals.length <= MAX_PIVOT_SERIES) return pivot;
+    var items = pivot.rowVals.map(function (rv, i) { return { rv: rv, v: pivot.rowTotals[i] || 0 }; })
+      .sort(function (a, b) { return Math.abs(b.v) - Math.abs(a.v); });
+    var top = items.slice(0, MAX_PIVOT_SERIES - 1), rest = items.slice(MAX_PIVOT_SERIES - 1);
+    var etc = rest.reduce(function (a, x) { return a + x.v; }, 0);
+    return Object.assign({}, pivot, {
+      rowVals: top.map(function (x) { return x.rv; }).concat(["기타(" + rest.length + "개)"]),
+      rowTotals: top.map(function (x) { return x.v; }).concat([etc]),
+    });
+  }
+  function renderPivotTable(pivot, rowDimLabel, measureLabel) {
+    if (!pivot.rowVals.length) return '<div class="empty-state"><div class="big">📊</div>조건에 맞는 데이터가 없습니다.</div>';
+    var headCols = pivot.hasCol ? pivot.colVals : [measureLabel];
+    var headHtml = "<tr><th>" + esc(rowDimLabel) + "</th>" + headCols.map(function (c) { return "<th>" + esc(c) + "</th>"; }).join("") + (pivot.hasCol ? "<th>합계</th>" : "") + "</tr>";
+    var bodyHtml = pivot.rowVals.map(function (rv, ri) {
+      var cellsHtml = pivot.matrix[ri].map(function (v) { return '<td class="num">' + esc(fmtPivotVal(v)) + "</td>"; }).join("");
+      var totalCell = pivot.hasCol ? '<td class="num" style="font-weight:700">' + esc(fmtPivotVal(pivot.rowTotals[ri])) + "</td>" : "";
+      return "<tr><td>" + esc(rv) + "</td>" + cellsHtml + totalCell + "</tr>";
+    }).join("");
+    var footHtml = pivot.hasCol
+      ? '<tr class="total"><td>합계</td>' + pivot.colTotals.map(function (v) { return '<td class="num">' + esc(fmtPivotVal(v)) + "</td>"; }).join("") + '<td class="num">' + esc(fmtPivotVal(pivot.grandTotal)) + "</td></tr>"
+      : "";
+    return '<table class="pivot-table"><thead>' + headHtml + "</thead><tbody>" + bodyHtml + footHtml + "</tbody></table>";
+  }
+  // 표를 그대로 엑셀/복사용 2차원 배열(AoA)로 뽑는다 — renderPivotTable과 같은 내용을 그대로 반영한다.
+  function pivotTableAoA(pivot, rowDimLabel, measureLabel) {
+    var headers = [rowDimLabel].concat(pivot.hasCol ? pivot.colVals : [measureLabel]).concat(pivot.hasCol ? ["합계"] : []);
+    var rows = pivot.rowVals.map(function (rv, ri) {
+      var vals = pivot.matrix[ri].map(function (v) { return v == null ? "" : v; });
+      return [rv].concat(vals).concat(pivot.hasCol ? [pivot.rowTotals[ri] == null ? "" : pivot.rowTotals[ri]] : []);
+    });
+    if (pivot.hasCol) rows.push(["합계"].concat(pivot.colTotals.map(function (v) { return v == null ? "" : v; })).concat([pivot.grandTotal == null ? "" : pivot.grandTotal]));
+    return { headers: headers, rows: rows };
+  }
+  // ---- 그래프 배치 지침 겹침 방지 요령은 buildFlowSvg 상단 주석과 동일 원칙을 따른다: 라벨/막대가
+  // viewBox 밖으로 나가지 않게 하고, 카테고리가 많으면 svg 너비 자체를 늘려 가로 스크롤로 해결한다
+  // (.pivot-chart-wrap이 overflow-x:auto). ----
+  function barPathD(x, y, w, h, r) {
+    if (h <= 0.5) return "";
+    r = Math.max(0, Math.min(r, w / 2, h));
+    if (r < 1) return 'M' + x + ',' + (y + h) + ' L' + x + ',' + y + ' L' + (x + w) + ',' + y + ' L' + (x + w) + ',' + (y + h) + ' Z';
+    return (
+      "M" + x + "," + (y + h) +
+      " L" + x + "," + (y + r) +
+      " Q" + x + "," + y + " " + (x + r) + "," + y +
+      " L" + (x + w - r) + "," + y +
+      " Q" + (x + w) + "," + y + " " + (x + w) + "," + (y + r) +
+      " L" + (x + w) + "," + (y + h) + " Z"
+    );
+  }
+  function drawPivotBar(pivot, widthHint) {
+    var seriesCount = pivot.hasCol ? pivot.colVals.length : 1;
+    var n = pivot.rowVals.length;
+    var groupW = Math.max(46, seriesCount * 20 + 14);
+    var marginL = 64, marginR = 16, marginT = 16, marginB = 58;
+    var plotH = 260;
+    var plotW = Math.max((widthHint || 640) - marginL - marginR, n * groupW);
+    var W = marginL + plotW + marginR, H = marginT + plotH + marginB;
+    var vals = [];
+    pivot.matrix.forEach(function (row) { row.forEach(function (v) { if (v != null) vals.push(v); }); });
+    var maxV = vals.length ? Math.max.apply(null, vals.concat([0])) : 0;
+    var minV = vals.length ? Math.min.apply(null, vals.concat([0])) : 0;
+    var domainMax = maxV > 0 ? maxV * 1.12 : (minV < 0 ? 0 : 1);
+    var domainMin = minV < 0 ? minV * 1.12 : 0;
+    var range = (domainMax - domainMin) || 1;
+    function yFor(v) { return marginT + plotH - ((v - domainMin) / range) * plotH; }
+    var zeroY = yFor(0);
+
+    var p = [];
+    var ticks = 4;
+    for (var t = 0; t <= ticks; t++) {
+      var tv = domainMin + (range * t / ticks);
+      var ty = yFor(tv);
+      p.push('<line x1="' + marginL + '" y1="' + ty + '" x2="' + (marginL + plotW) + '" y2="' + ty + '" stroke="var(--border)" stroke-width="1"/>');
+      p.push('<text x="' + (marginL - 8) + '" y="' + (ty + 4) + '" text-anchor="end" font-size="10.5" fill="var(--ink-faint)" font-family="var(--mono)">' + esc(fmtPivotVal(tv)) + "</text>");
+    }
+    var barGap = 2;
+    var barW = Math.max(4, (groupW - 10) / seriesCount - barGap);
+    pivot.rowVals.forEach(function (rv, ri) {
+      var gx = marginL + ri * groupW + 6;
+      for (var si = 0; si < seriesCount; si++) {
+        var v = pivot.matrix[ri][si];
+        if (v == null) continue;
+        var x = gx + si * (barW + barGap);
+        var y0 = zeroY, y1 = yFor(v);
+        var top = Math.min(y0, y1), h = Math.abs(y1 - y0);
+        var color = seriesCount > 1 ? "var(--series-" + ((si % 8) + 1) + ")" : "var(--accent)";
+        var label = (pivot.hasCol ? pivot.colVals[si] + " · " : "") + rv + ": " + fmtPivotVal(v);
+        var d = barPathD(x, top, barW, h, Math.min(4, barW / 2, h));
+        if (d) p.push('<path fill="' + color + '" d="' + d + '"><title>' + esc(label) + "</title></path>");
+      }
+      var lx = gx + (groupW - 12) / 2;
+      var short = rv.length > 9 ? rv.slice(0, 8) + "…" : rv;
+      p.push('<text x="' + lx + '" y="' + (marginT + plotH + 18) + '" text-anchor="end" font-size="10.5" fill="var(--ink-muted)" transform="rotate(-38 ' + lx + " " + (marginT + plotH + 18) + ')"><title>' + esc(rv) + "</title>" + esc(short) + "</text>");
+    });
+    p.push('<line x1="' + marginL + '" y1="' + zeroY + '" x2="' + (marginL + plotW) + '" y2="' + zeroY + '" stroke="var(--border-strong)" stroke-width="1.4"/>');
+    var svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + W + ' ' + H + '" width="' + W + '" height="' + H + '" role="img" aria-label="피벗 막대그래프">' + p.join("") + "</svg>";
+    return { svg: svg, width: W, height: H };
+  }
+  function drawPivotPie(pivotForPie) {
+    var labels = pivotForPie.rowVals, values = pivotForPie.rowTotals.map(function (v) { return v == null ? 0 : v; });
+    var W = 380, H = 300, cx = 150, cy = 150, r = 108;
+    var total = values.reduce(function (a, b) { return a + Math.max(b, 0); }, 0);
+    if (!total) return { svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + W + " " + H + '" width="' + W + '" height="' + H + '"></svg>', width: W, height: H };
+    var p = [];
+    var angle = -Math.PI / 2;
+    labels.forEach(function (lab, i) {
+      var v = Math.max(values[i], 0);
+      if (!v) return;
+      var frac = v / total;
+      var a0 = angle, a1 = angle + frac * Math.PI * 2;
+      angle = a1;
+      var x0 = cx + r * Math.cos(a0), y0 = cy + r * Math.sin(a0);
+      var x1 = cx + r * Math.cos(a1), y1 = cy + r * Math.sin(a1);
+      var large = (a1 - a0) > Math.PI ? 1 : 0;
+      var d = "M" + cx + "," + cy + " L" + x0 + "," + y0 + " A" + r + "," + r + " 0 " + large + " 1 " + x1 + "," + y1 + " Z";
+      var color = "var(--series-" + ((i % 8) + 1) + ")";
+      var pct = Math.round(frac * 1000) / 10;
+      p.push('<path d="' + d + '" fill="' + color + '" stroke="var(--surface)" stroke-width="2"><title>' + esc(lab + ": " + fmtPivotVal(v) + " (" + pct + "%)") + "</title></path>");
+    });
+    var svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + W + " " + H + '" width="' + W + '" height="' + H + '" role="img" aria-label="피벗 원형그래프">' + p.join("") + "</svg>";
+    return { svg: svg, width: W, height: H };
+  }
+  function renderPivotLegend(labels) {
+    return '<div class="flow-legend">' + labels.map(function (lab, i) {
+      return '<div class="item"><span class="sw" style="background:var(--series-' + ((i % 8) + 1) + ')"></span>' + esc(lab) + "</div>";
+    }).join("") + "</div>";
+  }
+  // CSS var() 는 문서 스타일에 얹혀 있을 때만 풀린다 — 그래프를 화면과 분리된 <img>(PNG 다운로드/복사용)로
+  // 내보낼 때는 이 함수로 var(--x)를 지금 화면에 실제로 적용된 색상 값으로 미리 바꿔둬야 한다.
+  function resolveSvgColors(svgString) {
+    var cs = getComputedStyle(document.documentElement);
+    function v(name, fallback) { var val = cs.getPropertyValue(name); return (val && val.trim()) || fallback; }
+    var map = {
+      "var(--accent)": v("--accent", "#0e7c86"),
+      "var(--border)": v("--border", "#d7e2e3"),
+      "var(--border-strong)": v("--border-strong", "#b9c9cb"),
+      "var(--ink-faint)": v("--ink-faint", "#7c9297"),
+      "var(--ink-muted)": v("--ink-muted", "#4c6469"),
+      "var(--surface)": v("--surface", "#ffffff"),
+    };
+    for (var i = 1; i <= 8; i++) map["var(--series-" + i + ")"] = v("--series-" + i, "#888888");
+    var out = svgString;
+    Object.keys(map).forEach(function (k) { out = out.split(k).join(map[k]); });
+    return out;
+  }
+  function renderPivotPage(main) {
+    var rows = pivotFilteredRows();
+    var rowKey = state.pivotRow || "dept";
+    var colKey = state.pivotCol || "";
+    if (colKey === rowKey) colKey = state.pivotCol = ""; // 같은 필드를 행/열에 동시에 못 고르게 한다
+    var measureKey = state.pivotMeasure || "유량";
+    var agg = measureKey === "__count__" ? "count" : (state.pivotAgg || "sum");
+    if (colKey && state.pivotChartType === "pie") state.pivotChartType = "bar"; // 파이는 열이 없을 때만
+    var chartType = state.pivotChartType || "bar";
+    var measureLabel = measureKey === "__count__" ? "건수" : measureKey;
+    var pivot = computePivot(rows, rowKey, colKey, measureKey, agg);
+    var rowDimLabel = pivotDimLabel(rowKey);
+    var colDimLabel = colKey ? pivotDimLabel(colKey) : "";
+
+    var chartForRender = chartType === "pie" ? capRowsForPie(pivot) : pivot;
+    var chart = pivot.rowVals.length ? (chartType === "pie" ? drawPivotPie(chartForRender) : drawPivotBar(pivot, 760)) : null;
+    if (chart) chart.svgResolved = resolveSvgColors(chart.svg);
+    var legendHtml = "";
+    if (chart) {
+      if (chartType === "pie") legendHtml = renderPivotLegend(chartForRender.rowVals);
+      else if (pivot.hasCol) legendHtml = renderPivotLegend(pivot.colVals);
+    }
+
+    main.innerHTML =
+      '<div class="page">' +
+        "<h1 style=\"font-size:19px;margin-bottom:4px\">그래프 만들기</h1>" +
+        '<p style="font-size:12.5px;color:var(--ink-muted);margin:0 0 16px">엑셀 피벗테이블처럼 <b>행/열/값/집계</b>를 고르면 표와 그래프가 그 자리에서 바로 만들어집니다. ' +
+          "상단 <b>PJT 선택</b> 범위를 그대로 따르고, 아래 대공정/대분류로 한 번 더 좁힐 수 있습니다. 행(또는 열)이 " + MAX_PIVOT_GROUPS + "개(계열은 " + MAX_PIVOT_SERIES + "개)를 넘으면 나머지는 \"기타\"로 묶습니다.</p>" +
+        '<div class="panel"><div class="filter-bar">' +
+          '<div class="field"><label class="field-label">행(Rows)</label><select id="pivotRowSel">' +
+            PIVOT_DIMENSIONS.map(function (d) { return '<option value="' + d.key + '"' + (rowKey === d.key ? " selected" : "") + ">" + esc(d.label) + "</option>"; }).join("") +
+          "</select></div>" +
+          '<div class="field"><label class="field-label">열(Columns, 선택)</label><select id="pivotColSel"><option value="">없음</option>' +
+            PIVOT_DIMENSIONS.filter(function (d) { return d.key !== rowKey; }).map(function (d) { return '<option value="' + d.key + '"' + (colKey === d.key ? " selected" : "") + ">" + esc(d.label) + "</option>"; }).join("") +
+          "</select></div>" +
+          '<div class="field"><label class="field-label">값(Values)</label><select id="pivotMeasureSel">' +
+            SPEC_FIELDS.map(function (f) { return '<option value="' + f + '"' + (measureKey === f ? " selected" : "") + ">" + f + "</option>"; }).join("") +
+            '<option value="__count__"' + (measureKey === "__count__" ? " selected" : "") + ">건수(개수)</option>" +
+          "</select></div>" +
+          '<div class="field"><label class="field-label">집계 방식</label><select id="pivotAggSel"' + (measureKey === "__count__" ? " disabled" : "") + ">" +
+            Object.keys(PIVOT_AGG_LABEL).map(function (k) { return '<option value="' + k + '"' + (agg === k ? " selected" : "") + ">" + PIVOT_AGG_LABEL[k] + "</option>"; }).join("") +
+          "</select></div>" +
+          '<div class="field"><label class="field-label">그래프 종류</label><select id="pivotChartTypeSel">' +
+            '<option value="bar"' + (chartType === "bar" ? " selected" : "") + ">막대그래프</option>" +
+            (!colKey ? '<option value="pie"' + (chartType === "pie" ? " selected" : "") + ">원형그래프</option>" : "") +
+          "</select></div>" +
+          '<div class="field"><label class="field-label">대공정 (필터)</label><select id="pivotMp"><option value="">전체</option>' +
+            MAJOR_PROCESSES.map(function (mp) { return '<option value="' + mp + '"' + (state.pivotFilterMp === mp ? " selected" : "") + ">" + mp + "</option>"; }).join("") +
+          "</select></div>" +
+          '<div class="field"><label class="field-label">대분류 (필터)</label><select id="pivotCategory"><option value="">전체</option>' +
+            CAT_ORDER.map(function (c) { return '<option value="' + c + '"' + (state.pivotFilterCategory === c ? " selected" : "") + ">" + c + "</option>"; }).join("") +
+          "</select></div>" +
+        "</div></div>" +
+        '<div class="panel">' +
+          '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">' +
+            "<h2>그래프</h2>" +
+            '<div class="btn-row">' +
+              '<button class="btn primary small" id="pivotCopyBtn">📋 표+그래프 복사 (PPT/워드에 붙여넣기)</button>' +
+              '<button class="btn small" id="pivotXlsxBtn">⬇ 표 엑셀 다운로드</button>' +
+              '<button class="btn small" id="pivotPngBtn">⬇ 그래프 이미지(PNG) 다운로드</button>' +
+            "</div>" +
+          "</div>" +
+          '<p id="pivotCopyMsg" style="font-size:11.5px;margin:6px 0 0;min-height:14px"></p>' +
+          (pivot.rowOverflow ? '<p class="auto-note" style="margin:2px 0 8px">상위 ' + MAX_PIVOT_GROUPS + "개 " + esc(rowDimLabel) + '만 표시하고 나머지 ' + pivot.rowOverflow + '개는 "기타"로 묶었습니다.</p>' : "") +
+          '<div id="pivotChartWrap" class="pivot-chart-wrap">' + (chart ? chart.svg : '<div class="empty-state"><div class="big">📊</div>조건에 맞는 데이터가 없습니다.</div>') + "</div>" +
+          legendHtml +
+        "</div>" +
+        '<div class="panel"><h2>표</h2><div style="overflow-x:auto;margin-top:8px">' + renderPivotTable(pivot, rowDimLabel, measureLabel) + "</div></div>" +
+      "</div>";
+
+    document.getElementById("pivotRowSel").onchange = function (e) { state.pivotRow = e.target.value; render(); };
+    document.getElementById("pivotColSel").onchange = function (e) { state.pivotCol = e.target.value; render(); };
+    document.getElementById("pivotMeasureSel").onchange = function (e) { state.pivotMeasure = e.target.value; if (e.target.value === "__count__") state.pivotAgg = "count"; render(); };
+    document.getElementById("pivotAggSel").onchange = function (e) { state.pivotAgg = e.target.value; render(); };
+    document.getElementById("pivotChartTypeSel").onchange = function (e) { state.pivotChartType = e.target.value; render(); };
+    document.getElementById("pivotMp").onchange = function (e) { state.pivotFilterMp = e.target.value; render(); };
+    document.getElementById("pivotCategory").onchange = function (e) { state.pivotFilterCategory = e.target.value; render(); };
+
+    document.getElementById("pivotXlsxBtn").onclick = function () {
+      var aoa = pivotTableAoA(pivot, rowDimLabel, measureLabel);
+      saveWorkbook("피벗_" + rowDimLabel + (colDimLabel ? "_" + colDimLabel : "") + "_" + todayTag() + ".xlsx", "피벗", aoa.headers, aoa.rows);
+    };
+    document.getElementById("pivotPngBtn").onclick = function () {
+      if (!chart) { alert("표시할 그래프가 없습니다."); return; }
+      if (!downloadsNs) { alert("이 화면에서는 다운로드를 사용할 수 없습니다. Claude 앱/웹에서 이 페이지를 열어 다시 시도해 주세요."); return; }
+      svgToPngBlob(chart.svgResolved, chart.width, chart.height, 2).then(function (blob) {
+        return downloadsNs.save({ filename: "피벗그래프_" + rowDimLabel + "_" + todayTag() + ".png", data: blob });
+      }).catch(function (e) {
+        if (e && e.code === "declined") return;
+        alert("이미지 다운로드에 실패했습니다: " + (e && e.message ? e.message : e));
+      });
+    };
+    document.getElementById("pivotCopyBtn").onclick = function () {
+      if (!chart) { alert("표시할 그래프가 없습니다."); return; }
+      var aoa = pivotTableAoA(pivot, rowDimLabel, measureLabel);
+      var title = "피벗: " + rowDimLabel + (colDimLabel ? " × " + colDimLabel : "") + " · " + measureLabel + (measureKey === "__count__" ? "" : " " + PIVOT_AGG_LABEL[agg]);
+      reportPivotCopyResult("복사하는 중...", false);
+      copyPivotToClipboard(chart, aoa, title);
+    };
+  }
+  // ---- 표+그래프를 PPT/워드에 그대로 붙여넣을 수 있도록 클립보드에 담는다 ----
+  function pivotTableHtml(aoa) {
+    var thead = "<tr>" + aoa.headers.map(function (h) { return '<th style="border:1px solid #999;padding:4px 8px;background:#f2f2f2;font-family:sans-serif;font-size:12px">' + esc(h) + "</th>"; }).join("") + "</tr>";
+    var tbody = aoa.rows.map(function (r) {
+      return "<tr>" + r.map(function (v, i) { return '<td style="border:1px solid #999;padding:4px 8px;font-family:sans-serif;font-size:12px' + (i === 0 ? "" : ";text-align:right") + '">' + esc(v == null ? "" : v) + "</td>"; }).join("") + "</tr>";
+    }).join("");
+    return '<table style="border-collapse:collapse">' + thead + tbody + "</table>";
+  }
+  function blobToDataUrl(blob) {
+    return new Promise(function (resolve, reject) {
+      var reader = new FileReader();
+      reader.onload = function () { resolve(reader.result); };
+      reader.onerror = function () { reject(new Error("이미지 변환 실패")); };
+      reader.readAsDataURL(blob);
+    });
+  }
+  function svgToPngBlob(svgString, width, height, scale) {
+    scale = scale || 2;
+    return new Promise(function (resolve, reject) {
+      var svgBlob = new Blob([svgString], { type: "image/svg+xml;charset=utf-8" });
+      var url = URL.createObjectURL(svgBlob);
+      var img = new Image();
+      img.onload = function () {
+        var canvas = document.createElement("canvas");
+        canvas.width = Math.max(1, Math.round(width * scale));
+        canvas.height = Math.max(1, Math.round(height * scale));
+        var ctx = canvas.getContext("2d");
+        var bg = getComputedStyle(document.documentElement).getPropertyValue("--surface");
+        ctx.fillStyle = (bg && bg.trim()) || "#ffffff";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.scale(scale, scale);
+        ctx.drawImage(img, 0, 0, width, height);
+        URL.revokeObjectURL(url);
+        canvas.toBlob(function (blob) { blob ? resolve(blob) : reject(new Error("PNG 변환 실패")); }, "image/png");
+      };
+      img.onerror = function () { URL.revokeObjectURL(url); reject(new Error("차트를 이미지로 변환하지 못했습니다.")); };
+      img.src = url;
+    });
+  }
+  // "text/html"(표+이미지)로 클립보드에 담는다 — PPT/워드에 붙여넣으면 표는 표로, 그래프는 그림으로
+  // 각각 인식된다. 최신 Clipboard API를 먼저 시도하고, 이 화면이 샌드박스 등으로 막으면(권한 정책 등)
+  // 화면 밖에 같은 내용을 숨겨 선택한 뒤 옛 document.execCommand('copy')로 한 번 더 시도한다. 둘 다
+  // 막히면(브라우저/환경에 따라 있을 수 있다) 아래 엑셀·PNG 다운로드 버튼으로 대신 받을 수 있다.
+  function writeClipboardRich(html, text) {
+    if (navigator.clipboard && window.ClipboardItem) {
+      try {
+        var item = new ClipboardItem({
+          "text/html": new Blob([html], { type: "text/html" }),
+          "text/plain": new Blob([text], { type: "text/plain" }),
+        });
+        return navigator.clipboard.write([item]);
+      } catch (e) {
+        // ClipboardItem 생성 자체가 막히면 바로 아래 폴백으로 내려간다
+      }
+    }
+    return execCommandCopyFallback(html);
+  }
+  function execCommandCopyFallback(html) {
+    return new Promise(function (resolve, reject) {
+      var holder = document.createElement("div");
+      holder.setAttribute("contenteditable", "true");
+      holder.style.cssText = "position:fixed;top:0;left:0;opacity:0;pointer-events:none;width:1px;height:1px;overflow:hidden";
+      holder.innerHTML = html;
+      document.body.appendChild(holder);
+      var range = document.createRange();
+      range.selectNodeContents(holder);
+      var sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+      var ok = false;
+      try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
+      sel.removeAllRanges();
+      document.body.removeChild(holder);
+      if (ok) resolve(); else reject(new Error("이 화면/브라우저에서는 자동 복사를 지원하지 않습니다."));
+    });
+  }
+  function copyPivotToClipboard(chart, aoa, title) {
+    var tableHtml = pivotTableHtml(aoa);
+    var tsv = [aoa.headers].concat(aoa.rows).map(function (r) { return r.map(function (v) { return v == null ? "" : v; }).join("\t"); }).join("\n");
+    svgToPngBlob(chart.svgResolved, chart.width, chart.height, 2)
+      .then(blobToDataUrl)
+      .then(function (dataUrl) {
+        var html =
+          "<div>" +
+            '<p style="font-family:sans-serif;font-size:13px;margin:0 0 6px">' + esc(title) + "</p>" +
+            '<img src="' + dataUrl + '" style="max-width:720px">' +
+            '<div style="margin-top:10px">' + tableHtml + "</div>" +
+          "</div>";
+        return writeClipboardRich(html, tsv);
+      })
+      .then(function () { reportPivotCopyResult("복사되었습니다 — PPT/워드에서 Ctrl+V(붙여넣기) 하세요.", false); })
+      .catch(function (e) {
+        reportPivotCopyResult("복사에 실패했습니다 (" + (e && e.message ? e.message : e) + ") — 대신 엑셀/PNG 다운로드 버튼을 이용해 주세요.", true);
+      });
+  }
+  function reportPivotCopyResult(msg, isError) {
+    var el = document.getElementById("pivotCopyMsg");
+    if (!el) return;
+    el.textContent = msg;
+    el.style.color = isError ? "var(--error)" : "var(--ok)";
   }
 
   // ===================================================================
@@ -2840,6 +3337,7 @@
     if (state.page === "guide") renderGuidePage(main);
     else if (state.page === "dashboard") renderDashboard(main);
     else if (state.page === "db") renderDbPage(main);
+    else if (state.page === "pivot") renderPivotPage(main);
     else if (state.page === "summary") renderSummaryPage(main);
     else if (state.page === "queries") renderQueriesPage(main);
     else if (state.page === "upload") renderUploadPage(main);
@@ -2854,7 +3352,7 @@
 
   if (window.claude && typeof window.claude.use === "function") {
     window.claude.use("db").then(function (dbNs) { if (dbNs) boot(dbNs); }).catch(function () {});
-    window.claude.use("downloads").then(function (ns) { if (ns) { downloadsNs = ns; if (state.page === "db") render(); } }).catch(function () {});
+    window.claude.use("downloads").then(function (ns) { if (ns) { downloadsNs = ns; if (state.page === "db" || state.page === "pivot") render(); } }).catch(function () {});
   }
   setTimeout(function () { if (!store.isLive) { setLive(false, "로컬 모드 (이 브라우저만)"); document.getElementById("banner").innerHTML = '<div class="banner">실시간 공유 저장소에 연결하지 못해 로컬 모드로 동작합니다. 이 브라우저 세션에서만 데이터가 유지됩니다.</div>'; } }, 3000);
 })();
