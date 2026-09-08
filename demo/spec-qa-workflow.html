@@ -2609,7 +2609,10 @@
       if (ok) resolve(); else reject(new Error("이 화면/브라우저에서는 자동 복사를 지원하지 않습니다."));
     });
   }
-  function copyPivotToClipboard(chart, aoa, title) {
+  // onResult(msg, isError)로 진행 상황을 보고한다 — 기본은 "그래프 만들기" 탭의 pivotCopyMsg에 쓰지만,
+  // SUMMARY 탭처럼 그 엘리먼트가 없는 화면에서는 각자의 메시지 영역을 가리키는 콜백을 넘겨 재사용한다.
+  function copyPivotToClipboard(chart, aoa, title, onResult) {
+    onResult = onResult || reportPivotCopyResult;
     var tableHtml = pivotTableHtml(aoa);
     var tsv = [aoa.headers].concat(aoa.rows).map(function (r) { return r.map(function (v) { return v == null ? "" : v; }).join("\t"); }).join("\n");
     svgToPngBlob(chart.svgResolved, chart.width, chart.height, 2)
@@ -2623,9 +2626,9 @@
           "</div>";
         return writeClipboardRich(html, tsv);
       })
-      .then(function () { reportPivotCopyResult("복사되었습니다 — PPT/워드에서 Ctrl+V(붙여넣기) 하세요.", false); })
+      .then(function () { onResult("복사되었습니다 — PPT/워드에서 Ctrl+V(붙여넣기) 하세요.", false); })
       .catch(function (e) {
-        reportPivotCopyResult("복사에 실패했습니다 (" + (e && e.message ? e.message : e) + ") — 대신 엑셀/PNG 다운로드 버튼을 이용해 주세요.", true);
+        onResult("복사에 실패했습니다 (" + (e && e.message ? e.message : e) + ") — 대신 엑셀/PNG 다운로드 버튼을 이용해 주세요.", true);
       });
   }
   function reportPivotCopyResult(msg, isError) {
@@ -2831,8 +2834,57 @@
   // ===================================================================
   // SUMMARY
   // ===================================================================
+  // "대분류별 총량 집계" 카드마다 붙는 미니 그래프 — "그래프 만들기" 탭이 쓰는 pivotSourceRows/
+  // computePivot/pivotMeasureFieldsFor를 그대로 재사용해 이중 계산 없이 항상 같은 숫자를 보장한다.
+  // rowKey="keyField"는 AGG_SPECS의 groupBy(성상명/전원종류/자재명)와 정확히 같은 값을 담고, measureKey는
+  // pivotMeasureFieldsFor(category)[0](필드 2개면 "__agg__", 1개면 그 필드)이라 computeAggregation()의
+  // 그룹 합산 결과와 항상 일치한다. "그래프 만들기" 탭 자체의 필터 상태(state.pivotFilter*)와는
+  // 무관하게 SUMMARY 탭의 대공정 필터(mp)만 반영한다.
+  function summaryCategoryPivot(mp, category) {
+    var rows = pivotSourceRows().filter(function (r) { return (!mp || r.dept === mp) && r.category === category; });
+    var measureKey = pivotMeasureFieldsFor(category)[0];
+    return { pivot: computePivot(rows, "keyField", null, measureKey, "sum"), measureKey: measureKey };
+  }
+  // renderAggCard(카드 텍스트만, 제원표 상세 "총량 집계" 탭과 공유)에 그래프 + 엑셀/PNG 다운로드·
+  // PPT 복사 버튼을 더한 SUMMARY 전용 버전. HTML 문자열만 돌려주는 renderAggCard와 달리, 버튼을
+  // 나중에(innerHTML 대입 후) 실제로 연결할 수 있도록 aoa/chart도 함께 반환한다.
+  function renderSummaryAggCard(a, mp, idx) {
+    var isGcs = GCS_CATEGORIES.indexOf(a.category) !== -1;
+    var rowsHtml = Object.keys(a.totals).sort().map(function (g) {
+      return '<div class="row"><span class="g">' + esc(g) + '</span><span class="v">' + fmtNum(a.totals[g]) + "</span></div>";
+    }).join("");
+    var cp = summaryCategoryPivot(mp, a.category);
+    var pivot = cp.pivot;
+    var measureLabel = pivotMeasureLabel(cp.measureKey, a.category);
+    var chart = pivot.rowVals.length ? drawPivotBar(pivot, 230) : null;
+    if (chart) chart.svgResolved = resolveSvgColors(chart.svg);
+    var aoa = pivotTableAoA(pivot, a.groupBy, measureLabel);
+    if (aoa.rows.length) aoa.rows.push(["합계", a.sum]); // 카드에 이미 보이는 "합계" 값을 다운로드 표에도 그대로 남긴다
+    var html =
+      '<div class="agg-card' + (isGcs ? " gcs" : "") + '">' +
+        '<div class="cat">' + a.category + (isGcs ? '<span class="chip type-AUTO">GCS · ' + a.distinctCount + "종</span>" : '<span class="eyebrow">' + a.distinctCount + "종</span>") + "</div>" +
+        '<div class="unit">' + a.groupBy + " 별 · " + a.unit + "</div>" +
+        (chart ? '<div class="pivot-chart-wrap" style="padding:8px;margin:8px 0">' + chart.svg + "</div>" : "") +
+        '<div class="rows">' + rowsHtml + "</div>" +
+        '<div class="total"><span>합계</span><span class="num">' + fmtNum(a.sum) + " " + a.unit + "</span></div>" +
+        (chart ?
+          '<div class="btn-row" style="margin-top:8px">' +
+            '<button class="btn small" data-agg-xlsx="' + idx + '">⬇ 엑셀</button>' +
+            '<button class="btn small" data-agg-png="' + idx + '">⬇ PNG</button>' +
+            '<button class="btn small primary" data-agg-copy="' + idx + '">📋 복사</button>' +
+          "</div>" : "") +
+      "</div>";
+    return { html: html, aoa: aoa, chart: chart, category: a.category, groupBy: a.groupBy, measureLabel: measureLabel };
+  }
+  function reportSummaryAggCopyResult(msg, isError) {
+    var el = document.getElementById("summaryAggCopyMsg");
+    if (!el) return;
+    el.textContent = msg;
+    el.style.color = isError ? "var(--error)" : "var(--ok)";
+  }
   function renderSummaryPage(main) {
     var s = computeSummary(state.summaryFilterMp);
+    var cardExports = s.categories.map(function (a, idx) { return renderSummaryAggCard(a, state.summaryFilterMp, idx); });
     main.innerHTML =
       '<div class="page">' +
         "<h1 style=\"font-size:19px;margin-bottom:4px\">제원 SUMMARY</h1>" +
@@ -2854,12 +2906,55 @@
           statTile("GCS 종수 (SPECIALITY GAS+폐액)", s.gcsMaterialCount + "종", "accent") +
         "</div></div>" +
         (s.gcsMaterials.length ? '<div class="panel"><h2>GCS 자재 목록</h2><p style="font-size:12.5px;color:var(--ink-muted);margin:6px 0 0">' + s.gcsMaterials.map(esc).join(", ") + "</p></div>" : "") +
-        '<div class="panel"><h2>대분류별 총량 집계</h2>' +
-          (s.categories.length ? '<div class="agg-grid" style="margin-top:10px">' + s.categories.map(renderAggCard).join("") + "</div>"
+        '<div class="panel">' +
+          '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">' +
+            "<h2>대분류별 총량 집계</h2>" +
+            (s.categories.length ? '<button class="btn small" id="summaryAggXlsxAllBtn">⬇ 전체 표 엑셀 다운로드</button>' : "") +
+          "</div>" +
+          '<p style="font-size:11.5px;color:var(--ink-muted);margin:6px 0 0">카드별 그래프는 그 대분류의 제원집계 로직(대분류별 총량 집계와 같은 기준)을 그대로 그린 것입니다. 각 카드의 <b>엑셀·PNG 다운로드</b>와 <b>표+그래프 복사</b>(PPT/워드에 Ctrl+V)는 "그래프 만들기" 탭과 같은 방식입니다.</p>' +
+          '<p id="summaryAggCopyMsg" style="font-size:11.5px;margin:4px 0 0;min-height:14px"></p>' +
+          (cardExports.length ? '<div class="agg-grid" style="margin-top:10px">' + cardExports.map(function (c) { return c.html; }).join("") + "</div>"
             : '<div class="empty-state">집계할 데이터가 없습니다.</div>') +
         "</div>" +
       "</div>";
     document.getElementById("summaryMp").onchange = function (e) { state.summaryFilterMp = e.target.value; state.summaryAutoApplied = false; render(); };
+    var xlsxAllBtn = document.getElementById("summaryAggXlsxAllBtn");
+    if (xlsxAllBtn) xlsxAllBtn.onclick = function () {
+      var headers = ["대분류", pivotDimLabel("keyField"), "값", "단위"];
+      var rows = [];
+      s.categories.forEach(function (a) {
+        Object.keys(a.totals).sort().forEach(function (g) { rows.push([a.category, g, a.totals[g], a.unit]); });
+      });
+      saveWorkbook("대분류별_총량집계_" + (state.summaryFilterMp || "전체대공정") + "_" + todayTag() + ".xlsx", "대분류별 총량 집계", headers, rows);
+    };
+    Array.prototype.forEach.call(main.querySelectorAll("[data-agg-xlsx]"), function (b) {
+      b.onclick = function () {
+        var c = cardExports[+b.dataset.aggXlsx];
+        saveWorkbook("대분류집계_" + c.category + "_" + todayTag() + ".xlsx", c.category, c.aoa.headers, c.aoa.rows);
+      };
+    });
+    Array.prototype.forEach.call(main.querySelectorAll("[data-agg-png]"), function (b) {
+      b.onclick = function () {
+        var c = cardExports[+b.dataset.aggPng];
+        if (!c.chart) return;
+        if (!downloadsNs) { alert("이 화면에서는 다운로드를 사용할 수 없습니다. Claude 앱/웹에서 이 페이지를 열어 다시 시도해 주세요."); return; }
+        svgToPngBlob(c.chart.svgResolved, c.chart.width, c.chart.height, 2).then(function (blob) {
+          return downloadsNs.save({ filename: "대분류집계_" + c.category + "_" + todayTag() + ".png", data: blob });
+        }).catch(function (e) {
+          if (e && e.code === "declined") return;
+          alert("이미지 다운로드에 실패했습니다: " + (e && e.message ? e.message : e));
+        });
+      };
+    });
+    Array.prototype.forEach.call(main.querySelectorAll("[data-agg-copy]"), function (b) {
+      b.onclick = function () {
+        var c = cardExports[+b.dataset.aggCopy];
+        if (!c.chart) return;
+        var title = c.category + " · " + c.groupBy + " 별 · " + c.measureLabel + " 합계";
+        reportSummaryAggCopyResult("복사하는 중...", false);
+        copyPivotToClipboard(c.chart, c.aoa, title, reportSummaryAggCopyResult);
+      };
+    });
   }
   function statTile(label, value, tone) {
     return '<div class="stat-tile"><div class="label">' + esc(label) + '</div><div class="value' + (tone ? " " + tone : "") + '">' + value + "</div></div>";
