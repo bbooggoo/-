@@ -14,6 +14,11 @@
   8. 폐액           = 자재명별로 실사용량을 SUM                        [TON/DAY]
   9. EXHAUST        = 성상명별로 (포트 수량 * 풍량)을 SUM               [CMM]
 
+위 각 줄의 곱셈에는 UTILITY 공통 항목인 "설비대수"(같은 유형의 설비가 몇 대인지)도
+함께 곱한다 — 같은 항목이라도 설비가 여러 대면 총량도 그 대수만큼 커지기 때문이다.
+설비대수 열이 없거나 그 행에 값이 비어 있으면 1대로 취급한다(이 열이 없는 옛 업로드
+양식과의 하위 호환).
+
 집계 단위는 "대분류 + 행(row_index)" 하나를 데이터 한 건("아이템")으로 본다.
 (엑셀 원본에서 같은 건설코드 아래 여러 행이 각각 하나의 가스/전원/배관 항목을
 나타내는 구조이므로, 행 단위 = 아이템 단위가 실제 시트 구조와 맞다.)
@@ -71,8 +76,17 @@ def compute_aggregation(spec_sheet) -> list[CategoryAggregation]:
 
     # (대분류, 행번호) -> {세부항목라벨: [값, ...]}
     rows: dict[tuple[str, int], dict[str, list[str]]] = {}
+    # 행번호 -> 설비대수 합계. "설비대수"는 UTILITY 공통 항목이라 field_name에 대분류 접두어가 없으므로
+    # (밑줄이 없으므로) 위 rows 딕셔너리에는 들어가지 않는다 — 행 단위로 따로 모아 뒀다가 그 행에서
+    # 나온 모든 대분류의 amount에 곱한다(같은 유형의 설비가 여러 대면 총량도 그만큼 커진다).
+    equip_count_by_row: dict[int, float] = {}
     for f in spec_sheet.fields:
-        if not f.field_name or "_" not in f.field_name:
+        if not f.field_name:
+            continue
+        if f.field_name == "설비대수":
+            equip_count_by_row[f.row_index] = equip_count_by_row.get(f.row_index, 0.0) + _num(f.value)
+            continue
+        if "_" not in f.field_name:
             continue
         category, base_label = f.field_name.split("_", 1)
         rows.setdefault((category, f.row_index), {}).setdefault(base_label, []).append(f.value or "")
@@ -81,7 +95,7 @@ def compute_aggregation(spec_sheet) -> list[CategoryAggregation]:
     for category, spec in AGGREGATION_SPECS.items():
         totals: dict[str, float] = {}
 
-        for (cat, _row_idx), item_fields in rows.items():
+        for (cat, row_idx), item_fields in rows.items():
             if cat != category:
                 continue
 
@@ -100,6 +114,11 @@ def compute_aggregation(spec_sheet) -> list[CategoryAggregation]:
 
             if not has_any_value:
                 continue  # 이 행에는 집계에 필요한 값이 전혀 없음 (다른 대분류의 행)
+
+            # 설비대수 열이 없거나 그 행에 값이 없으면 1대로 취급한다(과거 데이터·이 열이 없는 옛
+            # 업로드 양식과의 하위 호환).
+            equip_count = equip_count_by_row.get(row_idx, 1.0) or 1.0
+            amount *= equip_count
 
             totals[group_key] = totals.get(group_key, 0.0) + amount
 
