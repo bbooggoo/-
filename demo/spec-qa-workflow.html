@@ -743,6 +743,12 @@
     // 우측 하단 AI 챗봇 — 자연어 질문을 "그래프 만들기" 탭과 같은 피벗 조건(대분류/행/열/값/집계)으로
     // 바꿔 표+그래프를 채팅창 안에 바로 보여준다(sample 캐패빌리티, runChatQuery 참고).
     chatOpen: false, chatMessages: [], chatBusy: false, chatInput: "",
+    // "수동질의 등록" 탭 — 설계사가 이슈 발생을 기다리지 않고 직접 대공정/건설코드/설비모듈/필드를
+    // 골라 AS-IS(현재값 자동 표시)/TO-BE(제안값)를 채워 수동 질의를 새로 올린다. 대공정·건설코드·
+    // 설비모듈은 필수 선택값이라 이 초안 자체에 보관해 두고(선택이 바뀔 때마다 하위 선택지를 다시
+    // 계산), TO-BE/사유처럼 매 입력마다 다시 그릴 필요 없는 텍스트값은 다른 폼들과 마찬가지로 제출
+    // 시점에 DOM에서 바로 읽는다(중간에 렌더가 끼어도 입력 중이던 값이 사라지지 않도록).
+    manualQueryForm: { dept: "", code: "", module: "", itemIdx: null, field: "" },
   };
 
   var store = null;
@@ -1353,6 +1359,7 @@
     { id: "pivot", label: "그래프 만들기" },
     { id: "summary", label: "SUMMARY" },
     { id: "queries", label: "질의응답" },
+    { id: "manualQuery", label: "수동질의 등록" },
     { id: "upload", label: "제원표 업로드" },
     { id: "owners", label: "사용자 관리" },
   ];
@@ -1387,7 +1394,8 @@
   function renderPageNav() {
     var owner = currentOwner();
     document.getElementById("pageNav").innerHTML = PAGES.map(function (p) {
-      var dim = p.id === "upload" && (!owner || owner.role !== "ADMIN");
+      var dim = (p.id === "upload" && (!owner || owner.role !== "ADMIN"))
+        || (p.id === "manualQuery" && (!owner || (owner.role !== "DESIGNER" && owner.role !== "ADMIN")));
       var cls = "nav-btn" + (state.page === p.id ? " active" : "") + (dim ? " dim" : "");
       return '<button class="' + cls + '" data-page="' + p.id + '">' + p.label + (dim ? " 🔒" : "") + "</button>";
     }).join("");
@@ -3313,6 +3321,163 @@
   }
 
   // ===================================================================
+  // 수동질의 등록 (설계사 전용) — 검증 이슈가 없어도 설계사가 먼저 대공정/건설코드/설비모듈/필드를
+  // 골라 AS-IS(현재값)/TO-BE(제안값)를 채운 수동(SPEC) 질의를 새로 올릴 수 있게 한다. 대공정·건설코드·
+  // 설비모듈은 대상 항목을 명확히 하기 위한 필수값이다. 제출된 질의는 그대로 OPEN 상태로 들어가
+  // 기존 상태 머신(질의응답 탭의 renderOpenStageActions)을 그대로 타므로, 담당 기술팀이 "AS-IS 값
+  // 유지 확인" 또는 "값 제안"으로 검토를 마쳐야 최종 DB에 반영된다 — 설계사가 적은 TO-BE는 어디까지나
+  // 제안값이라 곧바로 반영되지 않는다(값 제안·최종승인 등 기존 함수는 하나도 건드리지 않는다).
+  // ===================================================================
+  function defaultManualQueryForm() { return { dept: "", code: "", module: "", itemIdx: null, field: "" }; }
+  function renderManualQueryPage(main) {
+    var owner = currentOwner();
+    var allowed = owner && (owner.role === "DESIGNER" || owner.role === "ADMIN");
+    if (!allowed) {
+      main.innerHTML =
+        '<div class="page"><h1 style="font-size:19px">수동질의 등록</h1><div class="panel"><p class="gate-note">이 화면은 <b>설계사</b>가 직접 수동 질의를 올리는 화면입니다. 상단에서 설계사(또는 관리자) 계정을 선택해 주세요' +
+          (owner ? " (현재: " + esc(owner.name) + ", " + ROLE_LABEL[owner.role] + ")" : " (현재: 미선택)") + ".</p></div></div>";
+      return;
+    }
+    var form = state.manualQueryForm;
+
+    var deptVal = form.dept;
+    var codesForDept = sheetList().filter(function (s) { return s.dept === deptVal; }).map(function (s) { return s.code; }).sort();
+    var codeVal = deptVal && codesForDept.indexOf(form.code) !== -1 ? form.code : "";
+
+    var sheet = codeVal ? state.sheets[codeVal] : null;
+    var items = sheet ? (sheet.items || []) : [];
+    var moduleSet = {};
+    items.forEach(function (it) { if (it.설비모듈 != null && it.설비모듈 !== "") moduleSet[it.설비모듈] = true; });
+    var modulesForCode = Object.keys(moduleSet).sort();
+    var moduleVal = codeVal && modulesForCode.indexOf(form.module) !== -1 ? form.module : "";
+
+    var matchingItems = moduleVal
+      ? items.map(function (it, idx) { return { it: it, idx: idx }; }).filter(function (p) { return p.it.설비모듈 === moduleVal; })
+      : [];
+    var itemIdxVal = null;
+    if (matchingItems.length === 1) itemIdxVal = matchingItems[0].idx;
+    else if (form.itemIdx != null && matchingItems.some(function (p) { return p.idx === form.itemIdx; })) itemIdxVal = form.itemIdx;
+    var selectedItem = itemIdxVal != null ? items[itemIdxVal] : null;
+
+    var fieldsForItem = selectedItem ? Object.keys(selectedItem).filter(function (k) { return k !== "category"; }) : [];
+    var fieldVal = selectedItem && fieldsForItem.indexOf(form.field) !== -1 ? form.field : "";
+    var asIsRaw = (selectedItem && fieldVal) ? selectedItem[fieldVal] : null;
+    var asIsDisplay = asIsRaw == null ? "-" : (typeof asIsRaw === "number" ? fmtNum(asIsRaw) : String(asIsRaw));
+
+    var stdOptions = (selectedItem && fieldVal) ? standardOptionsFor(selectedItem.category, fieldVal) : null;
+    var toBeControl = !fieldVal ? '<input class="text" id="mqToBe" disabled placeholder="필드를 먼저 선택하세요">'
+      : stdOptions ? ('<select class="text" id="mqToBe"><option value="">선택하세요</option>' + stdOptions.map(function (o) { return '<option value="' + esc(o) + '">' + esc(o) + "</option>"; }).join("") + "</select>")
+      : '<input class="text" id="mqToBe" placeholder="새 값 입력">';
+
+    var techName = deptVal ? pickTechLeadFor(deptVal) : null;
+    var defaultDiscipline = (owner.role === "DESIGNER" && (owner.disciplines || [])[0]) || (selectedItem ? CATEGORY_TO_DISCIPLINE[selectedItem.category] : null) || "";
+
+    main.innerHTML =
+      '<div class="page">' +
+        '<h1 style="font-size:19px;margin-bottom:4px">수동질의 등록</h1>' +
+        '<p style="font-size:12.5px;color:var(--ink-muted);margin:0 0 16px">검증 이슈가 없어도, 대공정 · 건설코드 · 설비모듈로 대상을 정확히 골라 AS-IS(현재값)/TO-BE(제안값) 형태의 수동 질의를 바로 올릴 수 있습니다. ' +
+          '제출해도 곧바로 DB에 반영되지 않고, 기존과 동일하게 담당 기술팀이 "질의응답" 탭에서 검토(AS-IS 값 유지 확인 또는 값 제안)를 마쳐야 최종 반영됩니다.</p>' +
+        '<div class="panel">' +
+          '<div class="filter-bar">' +
+            '<div class="field"><label class="field-label">대공정 <span style="color:var(--error)">*필수</span></label><select id="mqDept"><option value="">선택하세요</option>' +
+              MAJOR_PROCESSES.map(function (mp) { return '<option value="' + mp + '"' + (mp === deptVal ? " selected" : "") + ">" + mp + "</option>"; }).join("") +
+            "</select></div>" +
+            '<div class="field"><label class="field-label">건설코드 <span style="color:var(--error)">*필수</span></label><select id="mqCode"' + (deptVal ? "" : " disabled") + '><option value="">' + (deptVal ? "선택하세요" : "대공정을 먼저 선택하세요") + "</option>" +
+              codesForDept.map(function (c) { return '<option value="' + c + '"' + (c === codeVal ? " selected" : "") + ">" + c + "</option>"; }).join("") +
+            "</select></div>" +
+            '<div class="field"><label class="field-label">설비모듈 <span style="color:var(--error)">*필수</span></label><select id="mqModule"' + (codeVal ? "" : " disabled") + '><option value="">' + (codeVal ? "선택하세요" : "건설코드를 먼저 선택하세요") + "</option>" +
+              modulesForCode.map(function (m) { return '<option value="' + esc(m) + '"' + (m === moduleVal ? " selected" : "") + ">" + esc(m) + "</option>"; }).join("") +
+            "</select></div>" +
+          "</div>" +
+          (moduleVal && matchingItems.length === 0 ? '<p class="error-text">선택한 설비모듈에 해당하는 항목을 찾을 수 없습니다.</p>' : "") +
+          (moduleVal && matchingItems.length > 1
+            ? '<div class="filter-bar" style="margin-top:10px"><div class="field grow"><label class="field-label">대상 항목 (같은 설비모듈에 ' + matchingItems.length + '건이 있습니다) <span style="color:var(--error)">*필수</span></label><select id="mqItem"><option value="">선택하세요</option>' +
+                matchingItems.map(function (p) { var key = itemKeyField(p.it); return '<option value="' + p.idx + '"' + (p.idx === itemIdxVal ? " selected" : "") + ">" + esc(p.it.category) + " · " + esc(key.value) + " (행 #" + (p.idx + 1) + ")</option>"; }).join("") +
+              "</select></div></div>"
+            : "") +
+          (selectedItem
+            ? '<p style="font-size:11.5px;color:var(--ink-muted);margin:10px 0 0">대상 항목: <b>' + esc(selectedItem.category) + " · " + esc(itemKeyField(selectedItem).value) + "</b></p>"
+            : "") +
+          (selectedItem
+            ? '<div class="filter-bar" style="margin-top:10px"><div class="field grow"><label class="field-label">필드 <span style="color:var(--error)">*필수</span></label><select id="mqField"><option value="">선택하세요</option>' +
+                fieldsForItem.map(function (f) { return '<option value="' + esc(f) + '"' + (f === fieldVal ? " selected" : "") + ">" + esc(f) + "</option>"; }).join("") +
+              "</select></div></div>"
+            : "") +
+          (fieldVal
+            ? '<div class="filter-bar" style="margin-top:10px">' +
+                '<div class="field"><label class="field-label">AS-IS (현재값)</label><input class="text" value="' + esc(asIsDisplay) + '" disabled></div>' +
+                '<div class="field grow"><label class="field-label">TO-BE (제안값) <span style="color:var(--error)">*필수</span></label>' + toBeControl + "</div>" +
+              "</div>"
+            : "") +
+          (fieldVal
+            ? '<div class="filter-bar" style="margin-top:10px">' +
+                '<div class="field"><label class="field-label">공종</label><select id="mqDiscipline">' +
+                  DISCIPLINES.map(function (d) { return '<option value="' + d.code + '"' + (d.code === defaultDiscipline ? " selected" : "") + ">" + d.name + "</option>"; }).join("") +
+                "</select></div>" +
+                '<div class="field grow"><label class="field-label">사유/설명 (선택)</label><textarea id="mqReason" rows="1" placeholder="예: 현장 여건상 이 값으로 바뀌어야 합니다."></textarea></div>' +
+              "</div>"
+            : "") +
+          (deptVal
+            ? '<p class="auto-note" style="margin-top:10px">담당 기술팀: <b>' + esc(techName || "미배정(복수 담당 또는 없음)") + "</b> · 소속(대공정): <b>" + esc(deptVal) + "</b></p>"
+            : "") +
+          (fieldVal ? '<div class="btn-row" style="margin-top:10px"><button class="btn primary" id="mqSubmitBtn">수동질의 등록</button></div>' : "") +
+          '<div id="mqError"></div>' +
+        "</div>" +
+      "</div>";
+
+    document.getElementById("mqDept").onchange = function (e) {
+      form.dept = e.target.value; form.code = ""; form.module = ""; form.itemIdx = null; form.field = "";
+      render();
+    };
+    var codeSel = document.getElementById("mqCode");
+    if (codeSel) codeSel.onchange = function (e) { form.code = e.target.value; form.module = ""; form.itemIdx = null; form.field = ""; render(); };
+    var moduleSel = document.getElementById("mqModule");
+    if (moduleSel) moduleSel.onchange = function (e) { form.module = e.target.value; form.itemIdx = null; form.field = ""; render(); };
+    var itemSel = document.getElementById("mqItem");
+    if (itemSel) itemSel.onchange = function (e) { form.itemIdx = e.target.value === "" ? null : +e.target.value; form.field = ""; render(); };
+    var fieldSel = document.getElementById("mqField");
+    if (fieldSel) fieldSel.onchange = function (e) { form.field = e.target.value; render(); };
+
+    var submitBtn = document.getElementById("mqSubmitBtn");
+    if (submitBtn) submitBtn.onclick = function () {
+      var errEl = document.getElementById("mqError");
+      errEl.innerHTML = "";
+      if (!deptVal || !codeVal || !moduleVal || itemIdxVal == null || !fieldVal) {
+        errEl.innerHTML = '<p class="error-text">대공정 · 건설코드 · 설비모듈 · 필드를 모두 선택해 주세요.</p>';
+        return;
+      }
+      var toBeEl = document.getElementById("mqToBe");
+      var toBeRaw = (toBeEl.value || "").trim();
+      if (!toBeRaw) { errEl.innerHTML = '<p class="error-text">TO-BE(제안값)을 입력해 주세요.</p>'; return; }
+      var check = validateCandidate(codeVal, itemIdxVal, fieldVal, toBeRaw);
+      if (check.errors.length) {
+        errEl.innerHTML = check.errors.map(function (m) { return '<p class="error-text">' + esc(m) + "</p>"; }).join("");
+        return;
+      }
+      var disciplineVal = document.getElementById("mqDiscipline").value;
+      var reasonVal = (document.getElementById("mqReason").value || "").trim();
+      submitBtn.disabled = true;
+      store.addThread({
+        queryType: "MANUAL", queryNature: "SPEC", pjt: sheet.pjt, majorProcess: deptVal, discipline: disciplineVal, fieldLabel: fieldVal,
+        asIsValue: asIsDisplay, toBeValue: String(toBeRaw),
+        targets: [{ sheetCode: codeVal, itemIdx: itemIdxVal, field: fieldVal }], status: "OPEN",
+        title: "[설계사 제안] " + fieldVal + " '" + asIsDisplay + "' → '" + toBeRaw + "' (" + codeVal + ")",
+        question: reasonVal || "설계사가 직접 등록한 수동 질의입니다. AS-IS/TO-BE를 확인해 주세요.",
+        createdBy: owner.name, createdAt: nowIso(), updatedAt: nowIso(),
+        assignedOwnerName: techName,
+        messages: check.warnings.length ? [{ authorName: owner.name, role: "COMMENT", content: "제안값이 검증 경고를 포함합니다: " + check.warnings.join("; "), at: nowIso() }] : [],
+      }).then(function (newId) {
+        state.manualQueryForm = defaultManualQueryForm();
+        state.page = "queries"; state.selectedThreadId = newId; state.qOpenOnly = true;
+        render();
+      }).catch(function (e) {
+        submitBtn.disabled = false;
+        errEl.innerHTML = '<p class="error-text">등록 실패: ' + esc(e && e.message ? e.message : e) + "</p>";
+      });
+    };
+  }
+
+  // ===================================================================
   // 업로드 (관리자 전용)
   // ===================================================================
   function renderUploadPage(main) {
@@ -3721,6 +3886,7 @@
     else if (state.page === "pivot") renderPivotPage(main);
     else if (state.page === "summary") renderSummaryPage(main);
     else if (state.page === "queries") renderQueriesPage(main);
+    else if (state.page === "manualQuery") renderManualQueryPage(main);
     else if (state.page === "upload") renderUploadPage(main);
     else if (state.page === "owners") renderOwnersPage(main);
     else if (state.page === "sheet") renderSheetPage(main);
