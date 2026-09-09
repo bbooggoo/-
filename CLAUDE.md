@@ -28,3 +28,11 @@ git 백업본입니다. **이 아티팩트를 수정해서 게시(publish)할 �
 - `demo/README.md`에 이 아티팩트의 배포 링크와 기능 변경 이력이 정리되어
   있으니, 업무 프로세스가 바뀌면 그 문서도 함께 갱신하는 것을 고려한다(필수는
   아니지만 권장).
+
+## 답변 형식 (항상 지킬 것)
+
+모든 답변의 마지막에는 다음 두 링크를 반드시 포함한다:
+- 제원 질의 데스크(Artifact) 링크: https://claude.ai/code/artifact/fb3bc871-7c09-439d-88cd-0a6d971ef58c
+- 이 저장소(GitHub) 링크: 작업 중인 브랜치가 있으면 그 브랜치 링크
+  (예: https://github.com/bbooggoo/-/tree/<branch>), 없으면 저장소 루트 링크
+  (https://github.com/bbooggoo/-)

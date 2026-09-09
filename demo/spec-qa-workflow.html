@@ -1146,16 +1146,28 @@
     "전력값", "부하전류", "전압", "차단기전류", "전원종류", "풍량", "포트 수량", "실사용량",
   ]);
   var CONSTRUCTION_CODE_RE = /^P[A-Za-z0-9]{7}(-\d{2})?$/;
+  // ---- 업로드 파서를 "양식이 꼭 맞지 않아도 유연하게 이해"하도록 돕는 정규화 유틸 ----
+  // 헤더 문구가 표준 필드명과 공백만 다를 때(예: "설비 모듈" vs "설비모듈")도 같은 필드로 인식한다.
+  // 인식되면 표준 철자(HEADER_LABEL_HINTS에 있는 그대로)로 저장해, 이 필드를 이름으로 직접 참조하는
+  // 다른 화면(설비모듈 표시, 수동질의 등록의 필드 목록 등)이 그대로 동작하게 한다 — 매칭되지 않으면
+  // 원래 문구를 그대로 필드명으로 써서 DB화 자체는 막지 않는다.
+  function normLabelKey(s) { return String(s || "").replace(/\s+/g, ""); }
+  var HEADER_LABEL_BY_NORM = {};
+  HEADER_LABEL_HINTS.forEach(function (h) { HEADER_LABEL_BY_NORM[normLabelKey(h)] = h; });
+  function canonicalizeLabel(raw) { return HEADER_LABEL_BY_NORM[normLabelKey(raw)] || raw; }
   function cellText(v) { return v === null || v === undefined || String(v).trim() === "" ? "" : String(v).trim(); }
   function splitUnit(text) { var m = /^(.*?)\(([^()]+)\)\s*$/.exec(text); return m ? [m[1].trim(), m[2].trim()] : [text, null]; }
-  function isNumericText(s) { return s !== "" && !isNaN(s) && !isNaN(parseFloat(s)); }
+  // 쉼표 천단위 구분자가 섞인 값도 숫자로 인식한다(엑셀에서 숫자 열이 "1,234"처럼 텍스트로 들어오는
+  // 경우가 흔하다) — 인식 후에는 쉼표를 뗀 값으로 parseFloat해야 하므로 stripThousands도 함께 쓴다.
+  function stripThousands(s) { return s.replace(/,/g, ""); }
+  function isNumericText(s) { var t = stripThousands(s); return t !== "" && !isNaN(t) && !isNaN(parseFloat(t)); }
   function detectHeaderRows(rows) {
     var maxScan = Math.min(10, rows.length);
     var bestRow = 0, bestScore = -1;
     for (var r = 0; r < maxScan; r++) {
       var texts = (rows[r] || []).map(cellText).filter(function (t) { return t !== ""; });
       if (!texts.length) continue;
-      var score = texts.filter(function (t) { return HEADER_LABEL_HINTS.indexOf(splitUnit(t)[0]) !== -1; }).length;
+      var score = texts.filter(function (t) { return HEADER_LABEL_BY_NORM[normLabelKey(splitUnit(t)[0])] !== undefined; }).length;
       if (score > bestScore) { bestScore = score; bestRow = r; }
     }
     var labelRow = bestScore > 0 ? bestRow : 0;
@@ -1177,7 +1189,7 @@
       var rawLabel = cellText((rows[labelRow] || [])[c]);
       if (!rawLabel) continue;
       var parts = splitUnit(rawLabel);
-      var baseLabel = parts[0];
+      var baseLabel = canonicalizeLabel(parts[0]);
       var category = categoryRow !== labelRow ? cellText((rows[categoryRow] || [])[c]) : "";
       var isCommon = COMMON_FIELD_NAMES.indexOf(baseLabel) !== -1;
       colInfo[c] = { baseLabel: baseLabel, category: isCommon ? "" : category };
@@ -1227,7 +1239,7 @@
           }
           itemsByRowCat[r3] = itemsByRowCat[r3] || {};
           itemsByRowCat[r3][info.category] = itemsByRowCat[r3][info.category] || { category: info.category };
-          itemsByRowCat[r3][info.category][info.baseLabel] = isNumericText(text) ? parseFloat(text) : text;
+          itemsByRowCat[r3][info.category][info.baseLabel] = isNumericText(text) ? parseFloat(stripThousands(text)) : text;
         });
       });
       var items = [];
@@ -1251,6 +1263,58 @@
     if (found) return found;
     warnings.push("'" + code + "' 그룹의 대공정 표기 '" + raw + "'를 인식하지 못해 업로드 시 선택한 대공정(" + defaultDept + ")으로 처리했습니다.");
     return defaultDept;
+  }
+  // ---- 업로드 검수(양식 적합성 리포트) — 파서는 관대해서(위 parseGroupedWorkbook·canonicalizeLabel)
+  // 양식이 완벽히 맞지 않아도 일단 DB화하지만, "그래서 얼마나 양식에 맞게 들어왔는지"는 별도로 보여줘야
+  // 관리자가 원본 파일을 고칠지, 업로드된 값을 화면에서 손으로 고칠지 판단할 수 있다. 저장 자체를 막지
+  // 않는다 — 문제를 알려주기만 하는 리포트다. ----
+  var KNOWN_ITEM_FIELDS = {};
+  SPEC_FIELDS.concat(["성상명", "전원종류", "자재명", "설비모듈"]).forEach(function (f) { KNOWN_ITEM_FIELDS[f] = true; });
+  function auditParsedGroups(groups) {
+    var report = { itemCount: 0, missingKeyCount: 0, missingCategoryCount: 0, unknownCategories: {}, extraFields: {}, issueCount: 0 };
+    groups.forEach(function (g) {
+      report.itemCount += g.items.length;
+      report.issueCount += computeIssues(g.items).length;
+      g.items.forEach(function (it) {
+        var key = itemKeyField(it);
+        if (!key.name) report.missingKeyCount++;
+        if (!it.category) report.missingCategoryCount++;
+        else if (CAT_ORDER.indexOf(it.category) === -1) report.unknownCategories[it.category] = (report.unknownCategories[it.category] || 0) + 1;
+        Object.keys(it).forEach(function (f) { if (f !== "category" && !KNOWN_ITEM_FIELDS[f]) report.extraFields[f] = (report.extraFields[f] || 0) + 1; });
+      });
+    });
+    return report;
+  }
+  function renderUploadAudit(audit) {
+    if (!audit) return "";
+    var unknownCats = Object.keys(audit.unknownCategories);
+    var extraFields = Object.keys(audit.extraFields);
+    var clean = !audit.missingKeyCount && !audit.missingCategoryCount && !unknownCats.length && !audit.issueCount;
+    var lines = [];
+    lines.push("<li>총 " + audit.itemCount + "개 항목을 인식했습니다.</li>");
+    if (audit.missingKeyCount) {
+      lines.push('<li class="upload-result-warn">항목명(성상명/전원종류/자재명)이 없는 항목 ' + audit.missingKeyCount + "건 — 제원 DB·질의응답 화면에서 항목을 구분하기 어려울 수 있습니다.</li>");
+    }
+    if (audit.missingCategoryCount) {
+      lines.push('<li class="upload-result-warn">대분류가 비어 있는 항목 ' + audit.missingCategoryCount + "건 — 집계·검증 대상에서 빠집니다.</li>");
+    }
+    if (unknownCats.length) {
+      lines.push('<li class="upload-result-warn">표준 대분류(' + CAT_ORDER.join("/") + ') 목록에 없는 대분류 값: ' +
+        unknownCats.map(function (c) { return esc(c) + "(" + audit.unknownCategories[c] + "건)"; }).join(", ") +
+        " — 원본 그대로 저장했지만 이 항목들은 집계·검증 규칙이 적용되지 않습니다.</li>");
+    }
+    if (extraFields.length) {
+      lines.push("<li>표준 필드명과 달라 원본 문구 그대로 저장한 필드: " + extraFields.map(esc).join(", ") + " — 필요하면 제원표 상세 화면에서 값을 확인·수정할 수 있습니다.</li>");
+    }
+    lines.push("<li>" + (audit.issueCount
+      ? '<span style="color:var(--warn)">검증 규칙(성상별 유량 OVER·성상명 표준화) 위반 ' + audit.issueCount + '건 발견 — 각 제원표의 "검증 결과" 탭이나 "질의응답" 메뉴의 "자동 질의 일괄 생성"으로 처리하세요.</span>'
+      : "검증 규칙(성상별 유량 OVER·성상명 표준화)을 통과했습니다.") + "</li>");
+    return (
+      '<div style="margin-top:10px;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--surface-2)">' +
+        '<div style="font-weight:700;font-size:12.5px;margin-bottom:6px">' + (clean ? "✓ 검수 결과 — 양식에 맞게 잘 들어왔습니다" : "검수 결과") + "</div>" +
+        '<ul style="margin:0;padding-left:18px;font-size:12px;color:var(--ink-muted);line-height:1.7">' + lines.join("") + "</ul>" +
+      "</div>"
+    );
   }
 
   // ===================================================================
@@ -2125,6 +2189,28 @@
     if (!spec) return SPEC_FIELDS.slice();
     return spec.fields.length > 1 ? ["__agg__"].concat(spec.fields) : spec.fields.slice();
   }
+  // 값(Values)의 단위 — AGG_SPECS를 그대로 진실의 원천으로 삼는다(단위를 새로 지어내지 않는다).
+  // 대분류가 정해져 있으면 그 대분류의 단위를 그대로 쓰고, 대분류를 정하지 않았으면(전체) 그 필드를
+  // 쓰는 모든 대분류의 단위가 전부 같을 때만(예: 유량은 WATER/WASTE WATER/GAS/AIR 모두 SLPM) 단위를
+  // 보여준다 — 대분류마다 단위가 다른 필드(배관수량: SLPM/EA, 실사용량: TON/DAY/LITER/DAY)는 대분류를
+  // 정하기 전까지 단위를 확정할 수 없으므로 표시하지 않는다. AGG_SPECS에 없는 필드(압력·배관재질·
+  // 부하전류·전압·차단기전류 등)는 이 앱 어디에도 정의된 단위가 없으므로 항상 null이다.
+  function pivotMeasureUnit(key, category) {
+    if (key === "__count__" || key === "__agg__") return null; // __agg__는 라벨 자체에 이미 단위가 들어있다
+    if (category && AGG_SPECS[category] && AGG_SPECS[category].fields.indexOf(key) !== -1) return AGG_SPECS[category].unit;
+    var units = {};
+    CAT_ORDER.forEach(function (c) { if (AGG_SPECS[c].fields.indexOf(key) !== -1) units[AGG_SPECS[c].unit] = true; });
+    var keys = Object.keys(units);
+    return keys.length === 1 ? keys[0] : null;
+  }
+  // 그래프(축 눈금·툴팁)에 실제로 표기할 단위 — pivotMeasureUnit과 달리 "__agg__"도 그 대분류의 단위를
+  // 그대로 돌려준다(라벨 문자열에는 이미 단위가 들어있어 pivotMeasureLabel에서는 중복을 막지만, 그래프
+  // 축에는 라벨과 별개로 단위를 표기해야 하므로 여기서는 감추지 않는다).
+  function chartUnitFor(key, category) {
+    if (key === "__count__") return null;
+    if (key === "__agg__") { var spec = category && AGG_SPECS[category]; return spec ? spec.unit : null; }
+    return pivotMeasureUnit(key, category);
+  }
   // 값(Values) 드롭다운·표 헤더·그래프 범례 등에 쓰는 사람이 읽는 라벨. "__agg__"는 대분류가 정해져야만
   // (AGG_SPECS[category]가 있어야만) 뜻이 정해지므로 category를 함께 받는다.
   function pivotMeasureLabel(key, category) {
@@ -2133,7 +2219,8 @@
       var spec = category && AGG_SPECS[category];
       return spec ? spec.fields.join("×") + " 집계값(" + spec.unit + ")" : "집계값";
     }
-    return key;
+    var unit = pivotMeasureUnit(key, category);
+    return unit ? key + "(" + unit + ")" : key;
   }
   // 한 항목(item)의 "__agg__" 값 — computeAggregation()의 그룹 합산 전 단계(한 행의 amount)와 정확히
   // 같은 계산이다: value_fields를 전부 곱하되, 하나라도 없으면(다른 대분류의 행 등) null.
@@ -2314,7 +2401,7 @@
       " L" + (x + w) + "," + (y + h) + " Z"
     );
   }
-  function drawPivotBar(pivot, widthHint) {
+  function drawPivotBar(pivot, widthHint, unit) {
     var seriesCount = pivot.hasCol ? pivot.colVals.length : 1;
     var n = pivot.rowVals.length;
     var groupW = Math.max(46, seriesCount * 20 + 14);
@@ -2333,6 +2420,9 @@
     var zeroY = yFor(0);
 
     var p = [];
+    // 단위는 눈금마다 반복하지 않고(글자 수가 늘면 촘촘한 눈금끼리 겹친다) y축 맨 위에 한 번만 표기한다
+    // — 값 자체가 무엇의 단위인지는 이 한 줄로 알 수 있고, 아래 눈금·막대 라벨은 숫자만 보여준다.
+    if (unit) p.push('<text x="4" y="12" font-size="10" fill="var(--ink-faint)" font-family="var(--mono)">(' + esc(unit) + ")</text>");
     var ticks = 4;
     for (var t = 0; t <= ticks; t++) {
       var tv = domainMin + (range * t / ticks);
@@ -2351,7 +2441,7 @@
         var y0 = zeroY, y1 = yFor(v);
         var top = Math.min(y0, y1), h = Math.abs(y1 - y0);
         var color = seriesCount > 1 ? "var(--series-" + ((si % 8) + 1) + ")" : "var(--accent)";
-        var label = (pivot.hasCol ? pivot.colVals[si] + " · " : "") + rv + ": " + fmtPivotVal(v);
+        var label = (pivot.hasCol ? pivot.colVals[si] + " · " : "") + rv + ": " + fmtPivotVal(v) + (unit ? " " + unit : "");
         var d = barPathD(x, top, barW, h, Math.min(4, barW / 2, h));
         if (d) p.push('<path fill="' + color + '" d="' + d + '"><title>' + esc(label) + "</title></path>");
         // 막대 위(음수면 아래)에 값을 정수로 직접 표기한다 — 계열이 너무 촘촘해(barW<14px) 라벨끼리
@@ -2369,7 +2459,7 @@
     var svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + W + ' ' + H + '" width="' + W + '" height="' + H + '" role="img" aria-label="피벗 막대그래프">' + p.join("") + "</svg>";
     return { svg: svg, width: W, height: H };
   }
-  function drawPivotPie(pivotForPie) {
+  function drawPivotPie(pivotForPie, unit) {
     var labels = pivotForPie.rowVals, values = pivotForPie.rowTotals.map(function (v) { return v == null ? 0 : v; });
     var W = 380, H = 300, cx = 150, cy = 150, r = 108;
     var total = values.reduce(function (a, b) { return a + Math.max(b, 0); }, 0);
@@ -2388,7 +2478,7 @@
       var d = "M" + cx + "," + cy + " L" + x0 + "," + y0 + " A" + r + "," + r + " 0 " + large + " 1 " + x1 + "," + y1 + " Z";
       var color = "var(--series-" + ((i % 8) + 1) + ")";
       var pct = Math.round(frac * 1000) / 10;
-      p.push('<path d="' + d + '" fill="' + color + '" stroke="var(--surface)" stroke-width="2"><title>' + esc(lab + ": " + fmtPivotVal(v) + " (" + pct + "%)") + "</title></path>");
+      p.push('<path d="' + d + '" fill="' + color + '" stroke="var(--surface)" stroke-width="2"><title>' + esc(lab + ": " + fmtPivotVal(v) + (unit ? " " + unit : "") + " (" + pct + "%)") + "</title></path>");
       // 슬라이스가 너무 작으면(겹침 방지, 선택적 라벨 원칙) 값을 생략한다. 팔레트 어느 색 위에서도
       // 읽히도록 흰 글자 + 어두운 외곽선(halo)을 쓴다 — 슬라이스 색을 직접 텍스트 색으로 쓰지 않는다.
       if (frac >= 0.045) {
@@ -2449,12 +2539,13 @@
     var norm = normalizePivotState();
     var rowKey = norm.rowKey, colKey = norm.colKey, measureKey = norm.measureKey, agg = norm.agg, chartType = norm.chartType, measureFields = norm.measureFields;
     var measureLabel = pivotMeasureLabel(measureKey, state.pivotFilterCategory);
+    var measureUnit = chartUnitFor(measureKey, state.pivotFilterCategory);
     var pivot = computePivot(rows, rowKey, colKey, measureKey, agg);
     var rowDimLabel = pivotDimLabel(rowKey);
     var colDimLabel = colKey ? pivotDimLabel(colKey) : "";
 
     var chartForRender = chartType === "pie" ? capRowsForPie(pivot) : pivot;
-    var chart = pivot.rowVals.length ? (chartType === "pie" ? drawPivotPie(chartForRender) : drawPivotBar(pivot, 760)) : null;
+    var chart = pivot.rowVals.length ? (chartType === "pie" ? drawPivotPie(chartForRender, measureUnit) : drawPivotBar(pivot, 760, measureUnit)) : null;
     if (chart) chart.svgResolved = resolveSvgColors(chart.svg);
     var legendHtml = "";
     if (chart) {
@@ -2496,7 +2587,7 @@
         "</div></div>" +
         '<div class="panel">' +
           '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">' +
-            "<h2>그래프</h2>" +
+            "<h2>그래프" + (measureUnit ? ' <span style="font-weight:400;font-size:11.5px;color:var(--ink-faint)">(단위: ' + esc(measureUnit) + ")</span>" : "") + "</h2>" +
             '<div class="btn-row">' +
               '<button class="btn primary small" id="pivotCopyBtn">📋 표+그래프 복사 (PPT/워드에 붙여넣기)</button>' +
               '<button class="btn small" id="pivotXlsxBtn">⬇ 표 엑셀 다운로드</button>' +
@@ -2508,7 +2599,7 @@
           '<div id="pivotChartWrap" class="pivot-chart-wrap">' + (chart ? chart.svg : '<div class="empty-state"><div class="big">📊</div>조건에 맞는 데이터가 없습니다.</div>') + "</div>" +
           legendHtml +
         "</div>" +
-        '<div class="panel"><h2>표</h2><div style="overflow-x:auto;margin-top:8px">' + renderPivotTable(pivot, rowDimLabel, measureLabel) + "</div></div>" +
+        '<div class="panel"><h2>표' + (measureUnit ? ' <span style="font-weight:400;font-size:11.5px;color:var(--ink-faint)">(단위: ' + esc(measureUnit) + ")</span>" : "") + '</h2><div style="overflow-x:auto;margin-top:8px">' + renderPivotTable(pivot, rowDimLabel, measureLabel) + "</div></div>" +
       "</div>";
 
     document.getElementById("pivotRowSel").onchange = function (e) { state.pivotRow = e.target.value; render(); };
@@ -2741,9 +2832,10 @@
       var pivot = computePivot(rows, norm.rowKey, norm.colKey, norm.measureKey, norm.agg);
       var rowDimLabel = pivotDimLabel(norm.rowKey);
       var measureLabel = pivotMeasureLabel(norm.measureKey, state.pivotFilterCategory);
+      var measureUnit = chartUnitFor(norm.measureKey, state.pivotFilterCategory);
       var aoa = pivotTableAoA(pivot, rowDimLabel, measureLabel);
       var chartForRender = norm.chartType === "pie" ? capRowsForPie(pivot) : pivot;
-      var chart = pivot.rowVals.length ? (norm.chartType === "pie" ? drawPivotPie(chartForRender) : drawPivotBar(pivot, 320)) : null;
+      var chart = pivot.rowVals.length ? (norm.chartType === "pie" ? drawPivotPie(chartForRender, measureUnit) : drawPivotBar(pivot, 320, measureUnit)) : null;
       var title = rowDimLabel + (norm.colKey ? " × " + pivotDimLabel(norm.colKey) : "") + " · " + measureLabel + (norm.measureKey === "__count__" ? "" : " " + PIVOT_AGG_LABEL[norm.agg]);
       var answerText = (parsed && typeof parsed.answer === "string" && parsed.answer.trim()) ? parsed.answer.trim() : "요청하신 조건으로 표와 그래프를 만들었습니다.";
       return {
@@ -2864,7 +2956,7 @@
     var cp = summaryCategoryPivot(mp, a.category);
     var pivot = cp.pivot;
     var measureLabel = pivotMeasureLabel(cp.measureKey, a.category);
-    var chart = pivot.rowVals.length ? drawPivotBar(pivot, 230) : null;
+    var chart = pivot.rowVals.length ? drawPivotBar(pivot, 230, chartUnitFor(cp.measureKey, a.category)) : null;
     if (chart) chart.svgResolved = resolveSvgColors(chart.svg);
     var aoa = pivotTableAoA(pivot, a.groupBy, measureLabel);
     if (aoa.rows.length) aoa.rows.push(["합계", a.sum]); // 카드에 이미 보이는 "합계" 값을 다운로드 표에도 그대로 남긴다
@@ -3492,7 +3584,9 @@
       '<div class="page">' +
         "<h1 style=\"font-size:19px;margin-bottom:12px\">제원표 업로드</h1>" +
         '<div class="panel">' +
-          '<p class="lead">실제 백엔드와 같은 파서 로직(2단 헤더 자동 인식 + 건설코드 자동 그룹핑 + 대공정 자동 판별)을 이 브라우저에서 그대로 돌립니다.</p>' +
+          '<p class="lead">실제 백엔드와 같은 파서 로직(2단 헤더 자동 인식 + 건설코드 자동 그룹핑 + 대공정 자동 판별)을 이 브라우저에서 그대로 돌립니다. ' +
+            "표준 필드명과 완전히 같지 않아도(공백 차이 등) 최대한 알아보고, 그래도 낯선 열은 원본 문구 그대로 저장합니다 — 양식이 꼭 맞지 않아도 업로드 자체는 막지 않습니다. " +
+            "업로드 후 아래 <b>검수 결과</b>에서 항목명 누락·표준 대분류 이탈·검증 규칙 위반 등을 바로 확인할 수 있습니다.</p>" +
           '<div class="filter-bar">' +
             '<div class="field"><label class="field-label">PJT</label><select id="upPjt">' + pjtOptions().map(function (p) { return '<option value="' + p + '"' + (p === (state.selectedPjt || DEFAULT_PJT) ? " selected" : "") + ">" + p + "</option>"; }).join("") + "</select></div>" +
             '<div class="field"><label class="field-label">대공정 (기본값)</label><select id="upMp">' + MAJOR_PROCESSES.map(function (mp) { return '<option value="' + mp + '">' + mp + "</option>"; }).join("") + "</select></div>" +
@@ -3512,6 +3606,7 @@
     var r = state.uploadResult;
     var html = '<div class="upload-result-ok">건설코드 ' + r.count + "건이 새 제원표로 추가됐습니다: " + r.codes.map(esc).join(", ") + "</div>";
     if (r.warnings.length) html += "<ul style=\"margin:0;padding-left:18px\">" + r.warnings.map(function (w) { return '<li class="upload-result-warn">' + esc(w) + "</li>"; }).join("") + "</ul>";
+    html += renderUploadAudit(r.audit);
     return html;
   }
   function handleUploadSubmit() {
@@ -3537,7 +3632,7 @@
           uploadedBy: owner ? owner.name : "관리자", uploadedAt: nowIso(),
         }, "UPLOAD");
       })).then(function () {
-        state.uploadResult = { count: groups.length, warnings: parsed.warnings, codes: groups.map(function (g) { return g.code; }) };
+        state.uploadResult = { count: groups.length, warnings: parsed.warnings, codes: groups.map(function (g) { return g.code; }), audit: auditParsedGroups(groups) };
       });
     }).catch(function (err) {
       state.uploadResult = { error: err && err.message ? err.message : String(err) };
