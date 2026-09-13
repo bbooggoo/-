@@ -825,7 +825,7 @@
     // 값"이 아니라 위쪽 필드) — 상태에 없으면 대분류를 고르는 순간 입력해 둔 값이 지워져 버린다. 그
     // 외의 항목 값 입력 필드(새 항목의 필드/설비모듈/설비대수 등)는 그 뒤로 다시 그려질 일이 없어
     // 다른 폼과 마찬가지로 추가 버튼을 누를 때 DOM에서 바로 읽는다.
-    specEntryForm: { dept: "", code: "", isNewCode: false, category: "", newCodeValue: "", newPjt: "", newTitle: "", newLocation: "" },
+    specEntryForm: { dept: "", code: "", codeSearch: "", isNewCode: false, category: "", newCodeValue: "", newPjt: "", newTitle: "", newLocation: "" },
   };
 
   var store = null;
@@ -4680,6 +4680,10 @@
       '<div class="btn-row" style="margin-top:8px"><button class="btn primary small" id="seAddItemBtn">' + (isDirect ? "+ 항목 추가" : "+ 항목 추가 승인 요청") + "</button></div>"
     );
   }
+  // 건설코드가 많은 대공정(수백 건)에서 select 하나로는 원하는 코드를 찾기 어려워, 건설코드
+  // 검색창으로 먼저 좁힌 뒤 select에서 고르게 한다 — "수동질의 등록" 탭의 MQ_CODE_SELECT_LIMIT과
+  // 같은 이유로 검색 결과도 상한을 둔다(select 옵션이 너무 많아지는 것을 막기 위함).
+  var SE_CODE_SELECT_LIMIT = 300;
   function renderSpecEntryPage(main) {
     var owner = currentOwner();
     var allowed = owner && (owner.role === "TECH_LEAD" || owner.role === "CONSTRUCTION_LEAD" || owner.role === "ADMIN");
@@ -4696,8 +4700,13 @@
     var deptOptions = (owner.role === "TECH_LEAD" && (owner.majorProcesses || []).length) ? owner.majorProcesses : MAJOR_PROCESSES;
     if (owner.role === "TECH_LEAD" && deptOptions.length === 1 && !form.dept) form.dept = deptOptions[0];
     var deptVal = deptOptions.indexOf(form.dept) !== -1 ? form.dept : "";
-    var codesForDept = deptVal ? sheetList().filter(function (s) { return s.dept === deptVal; }).map(function (s) { return s.code; }).sort() : [];
-    var codeVal = (!form.isNewCode && deptVal && codesForDept.indexOf(form.code) !== -1) ? form.code : "";
+    var codesForDeptAll = deptVal ? sheetList().filter(function (s) { return s.dept === deptVal; }).map(function (s) { return s.code; }).sort() : [];
+    var codeSearch = (form.codeSearch || "").trim().toLowerCase();
+    var codesForDeptMatching = codeSearch ? codesForDeptAll.filter(function (c) { return c.toLowerCase().indexOf(codeSearch) !== -1; }) : codesForDeptAll;
+    var codesForDept = codesForDeptMatching.slice(0, SE_CODE_SELECT_LIMIT);
+    var codeVal = (!form.isNewCode && deptVal && codesForDeptAll.indexOf(form.code) !== -1) ? form.code : "";
+    // 검색으로 걸러져 select 목록에서 빠져도 이미 골라 둔 건설코드는 계속 선택된 채로 보이게 한다.
+    if (codeVal && codesForDept.indexOf(codeVal) === -1) codesForDept = [codeVal].concat(codesForDept);
     var sheet = codeVal ? state.sheets[codeVal] : null;
     var pendingByIdx = {};
     if (codeVal) {
@@ -4723,12 +4732,14 @@
             '<div class="field"><label class="field-label">대공정 <span style="color:var(--error)">*필수</span></label><select id="seDept"><option value="">선택하세요</option>' +
               deptOptions.map(function (mp) { return '<option value="' + mp + '"' + (mp === deptVal ? " selected" : "") + ">" + mp + "</option>"; }).join("") +
             "</select></div>" +
-            '<div class="field"><label class="field-label">건설코드</label><select id="seCode"' + (deptVal ? "" : " disabled") + '>' +
+            '<div class="field"><label class="field-label">건설코드 검색</label><input class="text" id="seCodeSearch" placeholder="예: PD0001"' + (deptVal ? "" : " disabled") + ' value="' + esc(form.codeSearch) + '"></div>' +
+            '<div class="field"><label class="field-label">건설코드' + (deptVal ? " (" + codesForDeptMatching.length + "건)" : "") + '</label><select id="seCode"' + (deptVal ? "" : " disabled") + '>' +
               '<option value="">' + (deptVal ? "선택하세요" : "대공정을 먼저 선택하세요") + "</option>" +
               codesForDept.map(function (c) { return '<option value="' + c + '"' + (c === codeVal && !form.isNewCode ? " selected" : "") + ">" + c + "</option>"; }).join("") +
             "</select></div>" +
             '<div class="field"><div class="checkbox-row"><input type="checkbox" id="seNewCodeToggle"' + (form.isNewCode ? " checked" : "") + '><label for="seNewCodeToggle" style="margin:0">새 건설코드 만들기</label></div></div>' +
           "</div>" +
+          (codesForDeptMatching.length > SE_CODE_SELECT_LIMIT ? '<p class="auto-note" style="margin:6px 0 0">검색 결과가 ' + codesForDeptMatching.length + '건이라 상위 ' + SE_CODE_SELECT_LIMIT + '건까지만 표시합니다 — 검색어를 더 구체적으로 입력해 좁혀 보세요.</p>' : "") +
           (form.isNewCode
             ? '<div class="filter-bar" style="margin-top:10px">' +
                 '<div class="field"><label class="field-label">건설코드 <span style="color:var(--error)">*필수</span></label><input class="text" id="seNewCodeValue" placeholder="예: PD999999" value="' + esc(form.newCodeValue) + '"></div>' +
@@ -4770,7 +4781,11 @@
       "</div>";
 
     function resetNewCodeFields() { form.newCodeValue = ""; form.newPjt = ""; form.newTitle = ""; form.newLocation = ""; }
-    document.getElementById("seDept").onchange = function (e) { form.dept = e.target.value; form.code = ""; form.isNewCode = false; form.category = ""; resetNewCodeFields(); render(); };
+    document.getElementById("seDept").onchange = function (e) { form.dept = e.target.value; form.code = ""; form.codeSearch = ""; form.isNewCode = false; form.category = ""; resetNewCodeFields(); render(); };
+    // 다른 탭의 검색창(dbSearch/qSearch)과 같은 방식 — 입력마다 다시 그리면(oninput) 매 키 입력마다
+    // 포커스를 잃을 수 있어, 입력을 마치고 벗어나거나 Enter를 누르면(change) 목록을 좁힌다.
+    var codeSearchEl = document.getElementById("seCodeSearch");
+    if (codeSearchEl) codeSearchEl.onchange = function (e) { form.codeSearch = e.target.value; render(); };
     var codeSel = document.getElementById("seCode");
     if (codeSel) codeSel.onchange = function (e) { form.code = e.target.value; form.isNewCode = false; form.category = ""; resetNewCodeFields(); render(); };
     var newCodeToggle = document.getElementById("seNewCodeToggle");
