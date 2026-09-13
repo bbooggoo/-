@@ -127,6 +127,8 @@
   .btn:disabled { opacity: 0.5; cursor: not-allowed; }
   .btn.small { padding: 5px 10px; font-size: 11.5px; }
   .btn-row { display: flex; gap: 8px; flex-wrap: wrap; }
+  /* window.confirm() 대신 쓰는 "한 번 더 클릭" 확인 상태 — withConfirmClick 참고 */
+  .btn.btn-confirm-armed { background: var(--error-soft); border-color: var(--error); color: var(--error); }
 
   .chip { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: 999px; white-space: nowrap; }
   .chip.dept { background: var(--surface-2); border: 1px solid var(--border-strong); color: var(--ink-muted); font-family: var(--mono); letter-spacing: 0.02em; }
@@ -738,6 +740,34 @@
     return (s !== "" && !isNaN(s) && !isNaN(parseFloat(s))) ? parseFloat(s) : raw;
   }
   function uid() { return "id" + Math.random().toString(36).slice(2) + Date.now().toString(36); }
+  // ---- 삭제·취소처럼 되돌리기 어려운 동작의 확인 — 지침(항상 지킬 것): window.confirm()을 쓰지
+  // 않는다. 이 아티팩트는 샌드박스 iframe 안에서 실행되는데, 그 환경에서 confirm()이 사용자에게
+  // 묻지 않고 곧바로 false를 반환하는 경우가 있어(권한 정책에 따라 다름), "이 요청을 취소할까요?"
+  // 같은 confirm() 뒤에 바로 return하는 코드는 버튼을 눌러도 아무 반응이 없는 것처럼 보이는 버그가
+  // 된다(실제로 제원 수기입력 탭의 "요청 취소"·"삭제 승인 요청" 버튼에서 이 문제가 있었다). 대신
+  // 버튼 자체를 "정말 …? (다시 클릭)"으로 잠깐 바꿔 같은 버튼을 한 번 더 누르면 실행하는 방식으로
+  // 확인을 받는다 — 새로 삭제/취소성 버튼을 추가할 때도 confirm() 대신 이 헬퍼를 쓴다.
+  function withConfirmClick(btn, confirmLabel, action) {
+    var originalLabel = btn.textContent;
+    var timer = null;
+    function reset() {
+      clearTimeout(timer);
+      btn.dataset.confirmArmed = "";
+      btn.textContent = originalLabel;
+      btn.classList.remove("btn-confirm-armed");
+    }
+    btn.onclick = function () {
+      if (btn.dataset.confirmArmed === "1") {
+        reset();
+        action();
+        return;
+      }
+      btn.dataset.confirmArmed = "1";
+      btn.textContent = confirmLabel;
+      btn.classList.add("btn-confirm-armed");
+      timer = setTimeout(reset, 4000);
+    };
+  }
   // 제원 항목의 "키 필드"(성상명/전원종류/자재명 중 있는 것) — 제원 DB·제원표 상세·엑셀 다운로드가 공유한다.
   function itemKeyField(it) {
     var name = it.성상명 != null ? "성상명" : it.전원종류 != null ? "전원종류" : it.자재명 != null ? "자재명" : null;
@@ -4298,15 +4328,14 @@
       };
     });
     Array.prototype.forEach.call(main.querySelectorAll("[data-delete-sheet]"), function (b) {
-      b.onclick = function () {
+      withConfirmClick(b, "정말 삭제? (다시 클릭)", function () {
         var code = b.dataset.deleteSheet;
-        if (!confirm("건설코드 " + code + " 제원표를 완전히 삭제할까요? 버전 이력을 포함해 되돌릴 수 없습니다 — 값을 보존한 채로 화면에서만 빼려면 대신 \"미적용으로 전환\"을 쓰세요.")) return;
         b.disabled = true;
         deleteUploadedSheet(code).then(render).catch(function (e) {
           b.disabled = false;
           reportManageError("삭제 실패: " + (e && e.message ? e.message : e));
         });
-      };
+      });
     });
     Array.prototype.forEach.call(main.querySelectorAll("[data-goto-sheet-manage]"), function (el) {
       el.addEventListener("click", function (e) { e.preventDefault(); openSheet(el.dataset.gotoSheetManage); });
@@ -4407,7 +4436,7 @@
     // UPDATE
     var before = req.beforeItem || {};
     return Object.keys(req.changes || {}).map(function (f) {
-      var oldV = before[f]; var newV = req.changes[f];
+      var oldV = specEntryEffectiveValue(before, f); var newV = req.changes[f];
       return esc(f) + ": " + esc(oldV == null ? "(없음)" : oldV) + " → " + esc(newV == null ? "(삭제)" : newV);
     }).join(", ") || "변경 없음";
   }
@@ -4432,7 +4461,7 @@
         return Promise.all(changedFields.map(function (f) {
           return store.addCorrection({
             sheetCode: req.code, itemIdx: req.itemIdx, field: f,
-            oldValue: String(before[f] == null ? "" : before[f]),
+            oldValue: String(specEntryEffectiveValue(before, f) == null ? "" : specEntryEffectiveValue(before, f)),
             newValue: String(req.changes[f] == null ? "" : req.changes[f]),
             source: "MANUAL_ENTRY", threadId: null, appliedBy: owner.name, appliedAt: nowIso(),
           });
@@ -4460,7 +4489,8 @@
       var before = req.beforeItem || {};
       var revertChanges = {};
       Object.keys(req.changes || {}).forEach(function (f) {
-        revertChanges[f] = Object.prototype.hasOwnProperty.call(before, f) ? before[f] : null;
+        revertChanges[f] = f === "설비대수" ? specEntryEffectiveValue(before, f)
+          : Object.prototype.hasOwnProperty.call(before, f) ? before[f] : null;
       });
       return specEntryRequestUpdate(req.code, req.itemIdx, revertChanges, owner, sheet);
     }
@@ -4468,6 +4498,21 @@
       return specEntryRequestAdd(req.code, sheet.dept, null, Object.assign({}, req.beforeItem), false, owner);
     }
     return Promise.reject(new Error("이 요청 유형은 복원 요청을 지원하지 않습니다."));
+  }
+  // 설비대수는 값이 아예 없으면(설비대수 열이 없던 옛 데이터) 1대로 취급하는 게 제원집계 로직의
+  // 기본값과 같다 — "이전 값과 비교"·"이전 값 표시"를 하는 모든 곳에서 이 기준을 함께 쓴다.
+  function specEntryEffectiveValue(it, f) {
+    return (f === "설비대수" && (it || {})[f] == null) ? 1 : (it || {})[f];
+  }
+  // 폼에서 읽은 값(vals) 전체가 아니라, 실제로 원래 값과 달라진 필드만 "변경"으로 남긴다 — 그래야
+  // 승인 요청 요약(specEntryRequestSummary)도 실제로 바꾼 값만 보여준다(건드리지 않은 필드까지
+  // "값 → 같은 값"으로 나열되는 문제를 막는다).
+  function specEntryDiffChanges(currentItem, vals) {
+    var changes = {};
+    Object.keys(vals).forEach(function (f) {
+      if (vals[f] !== specEntryEffectiveValue(currentItem, f)) changes[f] = vals[f];
+    });
+    return changes;
   }
   function readSpecEntryInputs(scopeEl) {
     var vals = {};
@@ -4528,22 +4573,20 @@
       };
     });
     Array.prototype.forEach.call(main.querySelectorAll("[data-ser-cancel]"), function (b) {
-      b.onclick = function () {
+      withConfirmClick(b, "정말 취소? (다시 클릭)", function () {
         var req = state.specEntryRequests.filter(function (r) { return r.id === b.dataset.serCancel; })[0];
         if (!req) return;
-        if (!confirm("이 요청을 취소할까요?")) return;
         b.disabled = true;
         cancelSpecEntryRequest(req).then(render).catch(function (e) { b.disabled = false; alert("취소 실패: " + (e && e.message ? e.message : e)); });
-      };
+      });
     });
     Array.prototype.forEach.call(main.querySelectorAll("[data-ser-revert]"), function (b) {
-      b.onclick = function () {
+      withConfirmClick(b, "건설팀 승인 요청? (다시 클릭)", function () {
         var req = state.specEntryRequests.filter(function (r) { return r.id === b.dataset.serRevert; })[0];
         if (!req) return;
-        if (!confirm("이 항목을 원래 값으로 되돌리는 요청을 건설팀 담당자에게 보낼까요? (승인 후 반영됩니다)")) return;
         b.disabled = true;
         requestRevertSpecEntry(req, owner).then(render).catch(function (e) { b.disabled = false; alert("복원 요청 실패: " + (e && e.message ? e.message : e)); });
-      };
+      });
     });
   }
   // TECH_LEAD("내 요청 현황")·ADMIN("전체 승인 대기") 화면 하단에 붙는 공용 패널
@@ -4754,9 +4797,12 @@
         var idx = +b.dataset.seSave;
         var row = main.querySelector('[data-se-row="' + idx + '"]');
         var vals = readSpecEntryInputs(row);
+        var currentItem = (sheet && (sheet.items || [])[idx]) || {};
+        var changes = specEntryDiffChanges(currentItem, vals);
         var errEl = document.getElementById("seError"); errEl.innerHTML = "";
+        if (!Object.keys(changes).length) { errEl.innerHTML = '<p class="error-text">변경된 값이 없습니다.</p>'; return; }
         b.disabled = true;
-        var action = isDirect ? specEntryUpdateItemDirect(codeVal, idx, vals) : specEntryRequestUpdate(codeVal, idx, vals, owner, sheet);
+        var action = isDirect ? specEntryUpdateItemDirect(codeVal, idx, changes) : specEntryRequestUpdate(codeVal, idx, changes, owner, sheet);
         action.then(function () { render(); }).catch(function (e) {
           b.disabled = false;
           errEl.innerHTML = '<p class="error-text">' + (isDirect ? "저장" : "요청") + " 실패: " + esc(e && e.message ? e.message : e) + "</p>";
@@ -4764,10 +4810,8 @@
       };
     });
     Array.prototype.forEach.call(main.querySelectorAll("[data-se-delete]"), function (b) {
-      b.onclick = function () {
+      withConfirmClick(b, isDirect ? "정말 삭제? (다시 클릭)" : "정말 삭제 요청? (다시 클릭)", function () {
         var idx = +b.dataset.seDelete;
-        var msg = isDirect ? "이 항목을 삭제할까요? (버전 이력에는 남아 되돌아볼 수 있습니다)" : "이 항목의 삭제를 요청할까요? (건설팀 담당자가 승인해야 실제로 삭제됩니다)";
-        if (!confirm(msg)) return;
         var errEl = document.getElementById("seError"); errEl.innerHTML = "";
         b.disabled = true;
         var action = isDirect ? specEntryDeleteItemDirect(codeVal, idx) : specEntryRequestDelete(codeVal, idx, owner, sheet);
@@ -4775,7 +4819,7 @@
           b.disabled = false;
           errEl.innerHTML = '<p class="error-text">' + (isDirect ? "삭제" : "요청") + " 실패: " + esc(e && e.message ? e.message : e) + "</p>";
         });
-      };
+      });
     });
     var addBtn = document.getElementById("seAddItemBtn");
     if (addBtn) addBtn.onclick = function () {
