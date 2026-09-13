@@ -24,6 +24,8 @@
     --error-soft: #fbe6e1;
     --role-admin: #6a4c93;
     --role-admin-soft: #ece3f5;
+    --role-construction: #2f6fb0;
+    --role-construction-soft: #dfe9f7;
     /* "그래프 만들기" 탭 피벗 차트의 계열(series) 색상 — dataviz 스킬의 검증된 기본 팔레트(카테고리
        8슬롯, CVD-safe 순서 고정)를 그대로 쓴다. 계열이 8개를 넘으면 나머지는 "기타"로 묶어 9번째
        색을 새로 만들지 않는다. */
@@ -44,6 +46,7 @@
       --warn: #dba24d; --warn-soft: #3a2c15;
       --error: #e28374; --error-soft: #3a1f19;
       --role-admin: #b79ce0; --role-admin-soft: #2b2140;
+      --role-construction: #7fb0e6; --role-construction-soft: #1c2c40;
       --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70; --series-4: #c98500;
       --series-5: #d55181; --series-6: #008300; --series-7: #9085e9; --series-8: #e66767;
       --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px -12px rgba(0,0,0,0.5);
@@ -59,6 +62,7 @@
     --warn: #dba24d; --warn-soft: #3a2c15;
     --error: #e28374; --error-soft: #3a1f19;
     --role-admin: #b79ce0; --role-admin-soft: #2b2140;
+    --role-construction: #7fb0e6; --role-construction-soft: #1c2c40;
     --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70; --series-4: #c98500;
     --series-5: #d55181; --series-6: #008300; --series-7: #9085e9; --series-8: #e66767;
     --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px -12px rgba(0,0,0,0.5);
@@ -133,6 +137,7 @@
   .chip.role-ADMIN { background: var(--role-admin-soft); color: var(--role-admin); }
   .chip.role-TECH_LEAD { background: var(--accent-soft); color: var(--accent-strong); }
   .chip.role-DESIGNER { background: var(--warn-soft); color: var(--warn); }
+  .chip.role-CONSTRUCTION_LEAD { background: var(--role-construction-soft); color: var(--role-construction); }
   .chip.type-AUTO { background: var(--accent-soft); color: var(--accent-strong); }
   .chip.type-MANUAL { background: var(--surface-2); border: 1px solid var(--border-strong); color: var(--ink-muted); }
 
@@ -391,8 +396,8 @@
     "CHEMICAL": "CCSS", "폐액": "CCSS", "SPECIALITY GAS": "SPECIALITY_GAS",
   };
 
-  var ROLES = ["ADMIN", "TECH_LEAD", "DESIGNER"];
-  var ROLE_LABEL = { ADMIN: "관리자", TECH_LEAD: "기술팀 담당자", DESIGNER: "설계사" };
+  var ROLES = ["ADMIN", "TECH_LEAD", "CONSTRUCTION_LEAD", "DESIGNER"];
+  var ROLE_LABEL = { ADMIN: "관리자", TECH_LEAD: "기술팀 담당자", CONSTRUCTION_LEAD: "건설팀 담당자", DESIGNER: "설계사" };
 
   // app/seed.py DEFAULT_VALIDATION_RULES 와 동일한 기준값
   var GAS_THRESHOLDS = { N2: 10, O2: 6, AR: 12, CDA: 15, HE: 8, H2: 6 };
@@ -584,6 +589,8 @@
     { name: "관리자", role: "ADMIN", majorProcesses: [], disciplines: [] },
     { name: "CVD 담당자", role: "TECH_LEAD", majorProcesses: ["CVD"], disciplines: [] },
     { name: "ETCH 담당자", role: "TECH_LEAD", majorProcesses: ["ETCH"], disciplines: [] },
+    { name: "건설팀 CVD 담당자", role: "CONSTRUCTION_LEAD", majorProcesses: ["CVD"], disciplines: [] },
+    { name: "건설팀 ETCH 담당자", role: "CONSTRUCTION_LEAD", majorProcesses: ["ETCH"], disciplines: [] },
     { name: "배관 설계사", role: "DESIGNER", majorProcesses: [], disciplines: ["PIPING"] },
   ];
 
@@ -747,6 +754,7 @@
     sheets: {},           // code -> {code,dept,title,location,items,...}
     threads: [],          // qa threads
     corrections: [],
+    specEntryRequests: [], // "제원 수기입력" 승인 대기 요청 (기술팀 제출 → 건설팀 담당자 승인/반려)
     dashFilterMp: "", dashFilterStatus: "",
     summaryFilterMp: "", summaryAutoApplied: false,
     qFilterMp: "", qFilterDiscipline: "", qFilterType: "", qFilterNature: "", qTechAction: "", qDesignerAction: "", qSearch: "", qOpenOnly: true, qRequeryOnly: false, qAutoApplied: false,
@@ -800,7 +808,7 @@
     return state.owners.filter(function (o) { return o.id === state.userId; })[0] || null;
   }
   function ownerLabel(o) {
-    var scope = o.role === "TECH_LEAD" ? (o.majorProcesses || []).join(", ")
+    var scope = (o.role === "TECH_LEAD" || o.role === "CONSTRUCTION_LEAD") ? (o.majorProcesses || []).join(", ")
       : o.role === "DESIGNER" ? (o.disciplines || []).map(disciplineName).join(", ") : "";
     return o.name + " · " + ROLE_LABEL[o.role] + (scope ? " (" + scope + ")" : "");
   }
@@ -968,6 +976,12 @@
   // ===================================================================
   function pickTechLeadFor(mp) {
     var cands = state.owners.filter(function (o) { return o.role === "TECH_LEAD" && (o.majorProcesses || []).indexOf(mp) !== -1; });
+    return cands.length === 1 ? cands[0].name : null;
+  }
+  // "제원 수기입력" 승인 대기 화면에서 요청 카드에 표시할 담당 건설팀 담당자 이름 — 여러 명이면 null
+  // (특정인을 지목하지 않고 대공정 전체 건설팀 담당자 누구나 승인 가능함을 뜻함).
+  function pickConstructionLeadFor(mp) {
+    var cands = state.owners.filter(function (o) { return o.role === "CONSTRUCTION_LEAD" && (o.majorProcesses || []).indexOf(mp) !== -1; });
     return cands.length === 1 ? cands[0].name : null;
   }
   function generateAutoQueries() {
@@ -1377,8 +1391,8 @@
   // 저장소: db 캐패빌리티 있으면 실시간 공유, 없으면 이 브라우저 세션 로컬 저장
   // ===================================================================
   function makeLocalStore() {
-    var owners = [], sheets = {}, threads = [], corrections = [], guideConfig = null;
-    var listeners = { owners: [], sheets: [], threads: [], corrections: [], guideConfig: [] };
+    var owners = [], sheets = {}, threads = [], corrections = [], specEntryRequests = [], guideConfig = null;
+    var listeners = { owners: [], sheets: [], threads: [], corrections: [], specEntryRequests: [], guideConfig: [] };
     function notify(key, getter) { listeners[key].forEach(function (cb) { cb(getter()); }); }
     function watch(key, cb, getter) {
       listeners[key].push(cb);
@@ -1392,11 +1406,14 @@
       addThread: function (data) { var doc = Object.assign({ id: uid() }, data); threads.push(doc); notify("threads", function () { return threads.slice(); }); return Promise.resolve(doc.id); },
       updateThread: function (id, patch) { var t = threads.filter(function (x) { return x.id === id; })[0]; if (t) Object.assign(t, patch); notify("threads", function () { return threads.slice(); }); return Promise.resolve(); },
       addCorrection: function (data) { corrections.push(Object.assign({ id: uid() }, data)); notify("corrections", function () { return corrections.slice(); }); return Promise.resolve(); },
+      addSpecEntryRequest: function (data) { var doc = Object.assign({ id: uid() }, data); specEntryRequests.push(doc); notify("specEntryRequests", function () { return specEntryRequests.slice(); }); return Promise.resolve(doc.id); },
+      updateSpecEntryRequest: function (id, patch) { var r = specEntryRequests.filter(function (x) { return x.id === id; })[0]; if (r) Object.assign(r, patch); notify("specEntryRequests", function () { return specEntryRequests.slice(); }); return Promise.resolve(); },
       setGuideConfig: function (doc) { guideConfig = Object.assign({}, doc); notify("guideConfig", function () { return guideConfig; }); return Promise.resolve(); },
       watchOwners: function (cb) { return watch("owners", cb, function () { return owners.slice(); }); },
       watchSheets: function (cb) { return watch("sheets", cb, function () { return Object.assign({}, sheets); }); },
       watchThreads: function (cb) { return watch("threads", cb, function () { return threads.slice(); }); },
       watchCorrections: function (cb) { return watch("corrections", cb, function () { return corrections.slice(); }); },
+      watchSpecEntryRequests: function (cb) { return watch("specEntryRequests", cb, function () { return specEntryRequests.slice(); }); },
       watchGuideConfig: function (cb) { return watch("guideConfig", cb, function () { return guideConfig; }); },
     };
   }
@@ -1405,6 +1422,7 @@
     var sheetsCol = dbNs.collection("spec_sheets");
     var threadsCol = dbNs.collection("qa_threads");
     var correctionsCol = dbNs.collection("corrections");
+    var specEntryRequestsCol = dbNs.collection("spec_entry_requests");
     var guideConfigCol = dbNs.collection("guide_config");
     function watchCollection(col, cb) {
       return col.onSnapshot(function (snap) {
@@ -1418,6 +1436,8 @@
       addThread: function (data) { return threadsCol.add(data).then(function (ref) { return ref.id; }); },
       updateThread: function (id, patch) { return threadsCol.doc(id).update(patch); },
       addCorrection: function (data) { return correctionsCol.add(data); },
+      addSpecEntryRequest: function (data) { return specEntryRequestsCol.add(data).then(function (ref) { return ref.id; }); },
+      updateSpecEntryRequest: function (id, patch) { return specEntryRequestsCol.doc(id).update(patch); },
       setGuideConfig: function (doc) { var body = Object.assign({}, doc); delete body.id; return guideConfigCol.doc("main").set(body); },
       watchOwners: function (cb) { return watchCollection(ownersCol, cb); },
       watchSheets: function (cb) {
@@ -1427,6 +1447,7 @@
       },
       watchThreads: function (cb) { return watchCollection(threadsCol, cb); },
       watchCorrections: function (cb) { return watchCollection(correctionsCol, cb); },
+      watchSpecEntryRequests: function (cb) { return watchCollection(specEntryRequestsCol, cb); },
       watchGuideConfig: function (cb) { return watchCollection(guideConfigCol, function (docs) { cb(docs[0] || null); }); },
     };
   }
@@ -1472,17 +1493,20 @@
   // ===================================================================
   // 렌더링: topbar / page-nav
   // ===================================================================
+  // desc: 탭 버튼에 커서를 올렸을 때 보여주는 한 줄 설명(title 속성 툴팁) — 새 탭을 추가할 때 항상
+  // 같이 채워 넣는다(renderPageNav 참고).
   var PAGES = [
-    { id: "guide", label: "업무 가이드" },
-    { id: "dashboard", label: "대시보드" },
-    { id: "db", label: "제원 DB" },
-    { id: "pivot", label: "그래프 만들기" },
-    { id: "summary", label: "SUMMARY" },
-    { id: "queries", label: "질의응답" },
-    { id: "manualQuery", label: "수동질의 등록" },
-    { id: "upload", label: "제원표 업로드" },
-    { id: "specEntry", label: "제원 수기입력" },
-    { id: "owners", label: "사용자 관리" },
+    { id: "guide", label: "업무 가이드", desc: "질의응답·제원 접수 처리 흐름과 플로우차트를 안내합니다." },
+    { id: "myTasks", label: "MY TASK", desc: "지금 로그인한 사람이 당장 처리해야 할 질의·승인 건을 한곳에 모아 보여줍니다." },
+    { id: "dashboard", label: "대시보드", desc: "전체 제원표 현황과 질의 통계를 한눈에 봅니다." },
+    { id: "db", label: "제원 DB", desc: "건설코드별 제원 항목을 검색하고 상세 내용을 확인합니다." },
+    { id: "pivot", label: "그래프 만들기", desc: "행/열/값/집계를 골라 제원 데이터를 표와 그래프로 바로 만들어 봅니다." },
+    { id: "summary", label: "SUMMARY", desc: "대공정별 제원 총량 집계 요약을 확인합니다." },
+    { id: "queries", label: "질의응답", desc: "제원 질의 목록을 확인하고 답변·값 제안·최종확인을 처리합니다." },
+    { id: "manualQuery", label: "수동질의 등록", desc: "설계사가 대공정/건설코드/항목을 직접 골라 새 질의를 등록합니다." },
+    { id: "upload", label: "제원표 업로드", desc: "협의된 엑셀 제원표를 업로드해 제원 DB에 자동으로 반영합니다." },
+    { id: "specEntry", label: "제원 수기입력", desc: "협의된 양식이 아닌 제원을 기술팀이 입력 요청하고, 건설팀 담당자가 승인해야 DB에 반영됩니다." },
+    { id: "owners", label: "사용자 관리", desc: "시스템 사용자와 역할별 담당 대공정/공종을 관리합니다." },
   ];
   function goPage(id) {
     state.page = id;
@@ -1517,9 +1541,11 @@
     document.getElementById("pageNav").innerHTML = PAGES.map(function (p) {
       var dim = (p.id === "upload" && (!owner || owner.role !== "ADMIN"))
         || (p.id === "manualQuery" && (!owner || (owner.role !== "DESIGNER" && owner.role !== "ADMIN")))
-        || (p.id === "specEntry" && (!owner || (owner.role !== "TECH_LEAD" && owner.role !== "ADMIN")));
+        || (p.id === "specEntry" && (!owner || (owner.role !== "TECH_LEAD" && owner.role !== "CONSTRUCTION_LEAD" && owner.role !== "ADMIN")))
+        || (p.id === "myTasks" && !owner);
       var cls = "nav-btn" + (state.page === p.id ? " active" : "") + (dim ? " dim" : "");
-      return '<button class="' + cls + '" data-page="' + p.id + '">' + p.label + (dim ? " 🔒" : "") + "</button>";
+      var title = p.desc + (dim ? " (" + (owner ? "현재 역할로는 접근할 수 없습니다" : "사용자를 먼저 선택해 주세요") + ")" : "");
+      return '<button class="' + cls + '" data-page="' + p.id + '" title="' + esc(title) + '">' + p.label + (dim ? " 🔒" : "") + "</button>";
     }).join("");
     Array.prototype.forEach.call(document.querySelectorAll("#pageNav .nav-btn"), function (btn) {
       btn.addEventListener("click", function () { goPage(btn.dataset.page); });
@@ -1546,6 +1572,75 @@
       // 담당자 스코프가 풀려도 "미해결만 보기"는 이 탭의 기본값이므로 꺼두지 않고 유지한다.
       state.qFilterMp = ""; state.qFilterDiscipline = ""; state.qOpenOnly = true; state.qAutoApplied = false;
     }
+  }
+
+  // ===================================================================
+  // MY TASK — "지금 로그인한 사람이 당장 처리해야 할 일"만 역할별로 한 화면에 모아 보여준다. 새 조치
+  // 유형이 생기면(예: 새로운 승인 단계) 역할별 섹션에 항목을 추가해야 한다. 판단 기준은 기존 화면들과
+  // 동일한 함수를 그대로 재사용한다 — techActionCategory/designerActionCategory(질의응답 탭과 동일),
+  // specEntryRequestsForApprover(제원 수기입력 탭과 동일) — 별도의 판단 로직을 새로 만들지 않는다.
+  // ===================================================================
+  // 질의응답 탭의 상세 화면으로 이동 — 필터에 걸려 목록에서 안 보이는 일이 없도록 필터를 모두 풀고
+  // 이동한다(그렇지 않으면 MY TASK에서 클릭해도 "미해결만 보기" 등 이전 필터에 가려 안 보일 수 있다).
+  function gotoQueryThread(id) {
+    state.page = "queries";
+    state.qFilterMp = ""; state.qFilterDiscipline = ""; state.qFilterType = ""; state.qFilterNature = "";
+    state.qTechAction = ""; state.qDesignerAction = ""; state.qSearch = ""; state.qOpenOnly = false; state.qRequeryOnly = false;
+    state.qAutoApplied = false;
+    state.selectedThreadId = id;
+    render();
+  }
+  function renderMyTasksPage(main) {
+    var owner = currentOwner();
+    if (!owner) {
+      main.innerHTML =
+        '<div class="page"><h1 style="font-size:19px">MY TASK</h1><div class="panel"><p class="gate-note">지금 처리해야 할 일을 보려면 상단에서 사용자를 먼저 선택해 주세요.</p></div></div>';
+      return;
+    }
+    var sections = [];
+    if (owner.role === "TECH_LEAD" || owner.role === "ADMIN") {
+      var techThreads = state.threads.filter(function (t) {
+        if (techActionCategory(t) == null) return false;
+        return owner.role === "ADMIN" || (owner.majorProcesses || []).indexOf(t.majorProcess) !== -1;
+      }).sort(function (a, b) { return (a.createdAt || "").localeCompare(b.createdAt || ""); });
+      sections.push({
+        title: "질의 판단/답변 필요 (기술팀)", count: techThreads.length,
+        body: techThreads.length ? techThreads.map(renderThreadCard).join("") : "",
+      });
+    }
+    if (owner.role === "CONSTRUCTION_LEAD" || owner.role === "ADMIN") {
+      var pendingReqs = specEntryRequestsForApprover(owner);
+      sections.push({
+        title: "제원 수기입력 승인 대기 (건설팀)", count: pendingReqs.length,
+        body: pendingReqs.length ? pendingReqs.map(function (r) { return renderSpecEntryRequestCard(r, "review"); }).join("") : "",
+      });
+    }
+    if (owner.role === "DESIGNER" || owner.role === "ADMIN") {
+      var designerThreads = state.threads.filter(function (t) {
+        var cat = designerActionCategory(t);
+        if (cat == null || cat === "AWAITING_TECH") return false; // 기술팀 대기중은 설계사가 할 일이 없으므로 제외
+        return owner.role === "ADMIN" || (t.discipline && (owner.disciplines || []).indexOf(t.discipline) !== -1);
+      }).sort(function (a, b) { return (a.updatedAt || "").localeCompare(b.updatedAt || ""); });
+      sections.push({
+        title: "최종확인/검증 필요 (설계사)", count: designerThreads.length,
+        body: designerThreads.length ? designerThreads.map(renderThreadCard).join("") : "",
+      });
+    }
+    var totalCount = sections.reduce(function (a, s) { return a + s.count; }, 0);
+    main.innerHTML =
+      '<div class="page">' +
+        '<h1 style="font-size:19px;margin-bottom:4px">MY TASK</h1>' +
+        '<p style="font-size:12.5px;color:var(--ink-muted);margin:0 0 16px">' + esc(ownerLabel(owner)) + '님이 지금 처리해야 할 일 — 총 <b>' + totalCount + "건</b>. 카드를 클릭하면 해당 화면으로 이동합니다.</p>" +
+        (totalCount === 0
+          ? '<div class="empty-state"><div class="big">🎉</div>지금 처리할 일이 없습니다.</div>'
+          : sections.filter(function (s) { return s.count > 0; }).map(function (s) {
+              return '<div class="panel"><h2>' + esc(s.title) + " (" + s.count + "건)</h2><div style=\"margin-top:10px\">" + s.body + "</div></div>";
+            }).join("")) +
+      "</div>";
+    Array.prototype.forEach.call(main.querySelectorAll("[data-thread]"), function (el) {
+      el.addEventListener("click", function () { gotoQueryThread(el.dataset.thread); });
+    });
+    wireSpecEntryRequestActions(main, owner);
   }
 
   // ===================================================================
@@ -1676,23 +1771,37 @@
       ],
     };
   }
-  // ---- 플로우차트 배치 지침 (겹침 방지) — 관리자가 문구를 고치거나 도형을 옮길 때 반드시 지킬 것:
+  // ---- 플로우차트 배치 지침 (겹침 방지, 항상 지킬 것 — 사용자 요청에 따른 고정 규칙) ----
+  // 아래 3개 함수(buildFlowSvg/buildNonSpecFlowSvg/buildIntakeFlowSvg)가 그리는 모든 플로우차트는
+  // (a) 화살표(선)가 자신이 드나드는 도형 외의 다른 rect/diamond 내부를 가로지르지 않고, (b) 화살표끼리
+  // 서로 교차·중첩되지 않으며, (c) 라벨 배경이 도형·다른 라벨과 겹치지 않아야 한다. 문구를 고치거나
+  // 도형/화살표를 옮길 때마다 아래를 반드시 지킨다 — 지키지 않으면 이 지침을 어긴 것이다:
   // 1. 라벨(label())의 사각형 배경은 opts.w와 줄 수로 크기가 정해진다 — 화살표 경로를 꺾어 라벨을 놓기
   //    전에, 그 라벨의 bounding box(가로: 중심±width/2, 세로: 중심±height/2)가 인접 노드의 rect/diamond
   //    bounding box와 겹치지 않는지 좌표로 직접 계산해서 확인한다. 특히 라벨을 화살표가 다른 도형으로
   //    "합류"하는 지점 근처에 두면, 그 도형의 가장자리와 자주 겹친다 — 합류 지점에서 최소 15~20px는
-  //    떼어 놓는다.
+  //    떼어 놓는다. 라벨 bounding box와 도형/다른 라벨 사이의 여백은 가능하면 6px(viewBox 기준) 이상
+  //    확보하고, 레이아웃 제약으로 그보다 좁아질 수밖에 없으면 실제 렌더링을 확대 스크린샷으로 찍어
+  //    사람 눈에 겹쳐 보이지 않는지 반드시 확인한다.
   // 2. 화살표(폴리라인)는 다른 도형의 내부를 가로질러선 안 된다 — 특히 되돌이(재질의) 화살표처럼 먼
   //    거리를 우회하는 선은, 각 구간(수평/수직)이 지나가는 좌표가 이미 그려진 모든 rect/diamond의
   //    bounding box 밖에 있는지 구간별로 확인한다. 같은 세로 줄(행)에 나란히 배치된 두 도형(예: TE1과
   //    MG1처럼 y 범위가 겹치는 도형들) 사이로 선을 지나가게 하려면, 그 두 도형 사이의 빈 gap(x 범위)을
   //    통과하거나, 아예 그 행의 y 범위 밖(위/아래)에서 수평 이동한 뒤에 진입해야 한다.
   // 3. 한 도형에 여러 화살표가 들어올 때는 서로 다른 x(또는 y) 지점에 진입시켜 화살표끼리, 그리고
-  //    화살표와 라벨이 뒤섞이지 않게 한다.
+  //    화살표와 라벨이 뒤섞이지 않게 한다. 서로 다른 두 화살표의 선분(구간)이 좌표상 교차하거나 겹치는
+  //    구간이 생기지 않는지(같은 x 또는 y를 공유하며 범위가 겹치는 경우 포함) 반드시 확인한다.
   // 4. 문구를 고쳐 줄 수나 글자 수가 늘어나면(특히 nodeLabels의 rect 텍스트) 고정된 도형 크기를 넘칠 수
   //    있다 — 한 줄 14자 내외를 넘으면 도형 너비를 함께 늘리거나 줄바꿈을 추가한다.
   // 5. 화면 밖으로 잘리지 않도록 모든 좌표(라벨의 bounding box 포함)가 viewBox 범위(0~1000, 0~900) 안에
   //    들어오는지 확인한다 — 특히 왼쪽 끝에 붙는 되돌이 화살표는 라벨을 선에서 오른쪽으로 띄워야 한다.
+  // 6. 화살표의 마지막 구간이 진입하는 도형 가장자리와 평행(수평 구간이 그 도형의 위/아랫변 y좌표에
+  //    닿거나, 수직 구간이 좌/우변 x좌표에 닿는 경우)이면 화살촉이 그 경계에 걸쳐 그려지므로, 반드시
+  //    그 도형(rect/diamond)을 그 화살표보다 먼저 p.push()해야 화살촉이 잘리지 않는다(z-order). 반대로
+  //    마지막 구간이 진입 가장자리에 수직(예: 위에서 곧장 아래로 내려와 윗변에 닿는 경우)이면 화살촉
+  //    전체가 도형 바깥에 위치하므로 순서는 상관없다.
+  // 새 도형/화살표를 추가한 뒤에는 Playwright 등으로 실제 렌더링을 스크린샷해 확대해서 눈으로도 다시
+  // 확인한다 — 좌표 계산만으로 놓치는 경우(자간·굵은 글씨로 텍스트가 라벨 너비를 넘는 경우 등)가 있다.
   // ----
   function buildFlowSvg(nodeLabels, edgeLabels) {
     function lineTspans(cx, lines, lineH) {
@@ -3977,14 +4086,21 @@
   }
 
   // ===================================================================
-  // 제원 수기입력 (기술팀 담당자 전용) — 협의된 제원 접수 양식(엑셀)이 아닌 형태로 제원이 들어왔을 때,
-  // "제원표 업로드" 탭의 자동 파서를 거치지 못하므로 기술팀 담당자가 이 화면에서 직접 항목을
-  // 추가/수정/삭제한다. 항목 구성(대분류별 키 필드·값 필드)은 CATEGORY_ITEM_SCHEMA로 협의된 양식과
-  // 동일하게 맞춰 두어, 여기서 입력한 값도 제원 DB·제원집계·질의응답 등 다른 화면에 업로드로 들어온
-  // 값과 완전히 똑같이 반영된다(별도 저장소를 쓰지 않고 state.sheets를 그대로 갱신한다). 검증 규칙
-  // (성상별 유량 OVER 등)도 다른 항목과 동일하게 "검증 결과" 탭에서 그대로 적용된다.
+  // 제원 수기입력 (기술팀 담당자 전용 입력 / 건설팀 담당자 승인) — 협의된 제원 접수 양식(엑셀)이 아닌
+  // 형태로 제원이 들어왔을 때, "제원표 업로드" 탭의 자동 파서를 거치지 못하므로 기술팀 담당자가 이
+  // 화면에서 직접 항목을 추가/수정/삭제한다. 항목 구성(대분류별 키 필드·값 필드)은 CATEGORY_ITEM_SCHEMA로
+  // 협의된 양식과 동일하게 맞춰 두어, 승인된 값도 제원 DB·제원집계·질의응답 등 다른 화면에 업로드로
+  // 들어온 값과 완전히 똑같이 반영된다. 검증 규칙(성상별 유량 OVER 등)도 다른 항목과 동일하게 "검증
+  // 결과" 탭에서 그대로 적용된다.
+  //
+  // 지침(항상 지킬 것): 기술팀이 이 화면에서 입력/수정/삭제해도 곧바로 제원 DB(state.sheets)에
+  // 반영되지 않는다 — "spec_entry_requests" 컬렉션에 PENDING 요청으로만 쌓이고, 담당 대공정의
+  // 건설팀 담당자(CONSTRUCTION_LEAD, 또는 ADMIN)가 승인해야만 실제로 saveSheetVersion이 호출되어
+  // DB에 반영된다(applySpecEntryRequest). 관리자(ADMIN)가 직접 입력하는 경우만 예외적으로 승인 없이
+  // 곧장 반영한다(specEntry*Direct를 바로 호출) — 관리자는 이미 모든 데이터를 다룰 수 있는 최상위
+  // 역할이기 때문이다.
   // ===================================================================
-  function specEntryUpdateItem(code, itemIdx, changes) {
+  function specEntryUpdateItemDirect(code, itemIdx, changes) {
     var sheet = state.sheets[code];
     if (!sheet) return Promise.resolve();
     var items = (sheet.items || []).map(function (it) { return Object.assign({}, it); });
@@ -3994,7 +4110,7 @@
     var newDoc = Object.assign({}, sheet, { items: items });
     return saveSheetVersion(code, newDoc, "MANUAL_ENTRY");
   }
-  function specEntryDeleteItem(code, itemIdx) {
+  function specEntryDeleteItemDirect(code, itemIdx) {
     var sheet = state.sheets[code];
     if (!sheet) return Promise.resolve();
     var items = (sheet.items || []).slice();
@@ -4003,11 +4119,91 @@
     return saveSheetVersion(code, newDoc, "MANUAL_ENTRY");
   }
   // sheetPatchBase: 기존 건설코드면 그 시트 전체(spread), 새 건설코드면 { code, dept, title, location, pjt, items: [] }
-  function specEntryAddItem(code, sheetPatchBase, newItem) {
+  function specEntryAddItemDirect(code, sheetPatchBase, newItem) {
     var items = (sheetPatchBase.items || []).slice();
     items.push(newItem);
     var newDoc = Object.assign({}, sheetPatchBase, { items: items });
     return saveSheetVersion(code, newDoc, "MANUAL_ENTRY");
+  }
+  // ---- 기술팀 담당자가 실제로 누르는 저장/삭제/추가 — DB에 곧장 반영하는 대신 승인 대기 요청을
+  // spec_entry_requests에 쌓는다. beforeItem/beforeCount는 승인 화면에 "무엇이 어떻게 바뀌는지"를
+  // 보여주기 위한 스냅샷일 뿐, 승인 시점에는 항상 그때의 최신 state.sheets에 다시 적용한다. ----
+  function specEntryRequestUpdate(code, itemIdx, changes, owner, sheet) {
+    return store.addSpecEntryRequest({
+      action: "UPDATE", code: code, dept: sheet.dept, itemIdx: itemIdx, changes: changes,
+      beforeItem: Object.assign({}, (sheet.items || [])[itemIdx]),
+      status: "PENDING", requestedBy: owner.name, requestedById: owner.id, requestedAt: nowIso(),
+    });
+  }
+  function specEntryRequestDelete(code, itemIdx, owner, sheet) {
+    return store.addSpecEntryRequest({
+      action: "DELETE", code: code, dept: sheet.dept, itemIdx: itemIdx,
+      beforeItem: Object.assign({}, (sheet.items || [])[itemIdx]),
+      status: "PENDING", requestedBy: owner.name, requestedById: owner.id, requestedAt: nowIso(),
+    });
+  }
+  function specEntryRequestAdd(code, dept, sheetPatchBase, newItem, isNewCode, owner) {
+    return store.addSpecEntryRequest({
+      action: "ADD", code: code, dept: dept, isNewCode: !!isNewCode,
+      sheetPatchBase: isNewCode ? sheetPatchBase : null, // 기존 건설코드면 승인 시점의 최신 시트를 그대로 쓰면 되므로 스냅샷이 필요 없다
+      newItem: newItem,
+      status: "PENDING", requestedBy: owner.name, requestedById: owner.id, requestedAt: nowIso(),
+    });
+  }
+  // ---- 승인 대기 요청 목록에서 다루는 헬퍼들 ----
+  function specEntryRequestsPending() { return state.specEntryRequests.filter(function (r) { return r.status === "PENDING"; }); }
+  // 건설팀 담당자(또는 ADMIN)가 승인 화면에서 볼 수 있는 요청 — CONSTRUCTION_LEAD는 자신의 담당
+  // 대공정(majorProcesses)에 해당하는 요청만, ADMIN은 전체를 본다.
+  function specEntryRequestsForApprover(owner) {
+    var list = specEntryRequestsPending();
+    if (!owner) return [];
+    if (owner.role === "ADMIN") return list;
+    if (owner.role === "CONSTRUCTION_LEAD") {
+      var mps = owner.majorProcesses || [];
+      return list.filter(function (r) { return mps.indexOf(r.dept) !== -1; });
+    }
+    return [];
+  }
+  // 요청 한 건을 사람이 읽을 수 있는 변경 요약으로 — 승인 대기 카드/내 요청 현황 목록에 함께 쓴다.
+  function specEntryRequestSummary(req) {
+    if (req.action === "ADD") {
+      var it = req.newItem || {};
+      var keyField = (CATEGORY_ITEM_SCHEMA[it.category] || {}).keyField;
+      var keyVal = keyField ? it[keyField] : "";
+      return "새 항목 추가 — " + esc(it.category || "") + (keyVal ? " · " + esc(keyField) + "=" + esc(keyVal) : "") + (req.isNewCode ? " (새 건설코드)" : "");
+    }
+    if (req.action === "DELETE") {
+      var b = req.beforeItem || {};
+      return "항목 삭제 — " + esc(b.category || "") + " · " + esc(itemKeyField(b).name || "") + "=" + esc(itemKeyField(b).value == null ? "" : itemKeyField(b).value);
+    }
+    // UPDATE
+    var before = req.beforeItem || {};
+    return Object.keys(req.changes || {}).map(function (f) {
+      var oldV = before[f]; var newV = req.changes[f];
+      return esc(f) + ": " + esc(oldV == null ? "(없음)" : oldV) + " → " + esc(newV == null ? "(삭제)" : newV);
+    }).join(", ") || "변경 없음";
+  }
+  // 승인 — 요청 내용을 그 시점의 최신 state.sheets에 실제로 적용(saveSheetVersion 호출)한 뒤 상태를
+  // APPROVED로 바꾼다. 반려 — DB에는 아무 영향 없이 상태만 REJECTED로 바꾼다.
+  function approveSpecEntryRequest(req, owner) {
+    var apply;
+    if (req.action === "ADD") {
+      var base = req.isNewCode ? req.sheetPatchBase : Object.assign({}, state.sheets[req.code]);
+      apply = specEntryAddItemDirect(req.code, base, req.newItem);
+    } else if (req.action === "DELETE") {
+      apply = specEntryDeleteItemDirect(req.code, req.itemIdx);
+    } else {
+      apply = specEntryUpdateItemDirect(req.code, req.itemIdx, req.changes);
+    }
+    return apply.then(function () {
+      return store.updateSpecEntryRequest(req.id, { status: "APPROVED", decidedBy: owner.name, decidedAt: nowIso() });
+    });
+  }
+  function rejectSpecEntryRequest(req, owner, note) {
+    return store.updateSpecEntryRequest(req.id, { status: "REJECTED", decidedBy: owner.name, decidedAt: nowIso(), decisionNote: note || "" });
+  }
+  function cancelSpecEntryRequest(req) {
+    return store.updateSpecEntryRequest(req.id, { status: "CANCELLED" });
   }
   function readSpecEntryInputs(scopeEl) {
     var vals = {};
@@ -4018,9 +4214,101 @@
     });
     return vals;
   }
+  // 승인 대기 요청 카드 — mode: "review"(승인/반려 버튼) · "mine"(취소 버튼) · "none"(버튼 없음, 이력 표시용)
+  function renderSpecEntryRequestCard(req, mode) {
+    var chip = req.status === "PENDING" ? '<span class="chip warn">대기중</span>'
+      : req.status === "APPROVED" ? '<span class="chip ok">승인됨</span>'
+      : req.status === "REJECTED" ? '<span class="chip error">반려됨</span>'
+      : '<span class="chip neutral">취소됨</span>';
+    var meta = esc(req.code) + " · " + esc(req.dept) + " · " + fmtTime(req.requestedAt) + " · " + esc(req.requestedBy);
+    var decided = req.decidedAt
+      ? '<div style="font-size:11.5px;color:var(--ink-muted);margin-top:2px">' + (req.status === "APPROVED" ? "승인" : "반려") + ": " + esc(req.decidedBy) + " · " + fmtTime(req.decidedAt) + (req.decisionNote ? " · " + esc(req.decisionNote) : "") + "</div>"
+      : "";
+    var actions = "";
+    if (mode === "review" && req.status === "PENDING") {
+      actions = '<div class="btn-row" style="margin-top:6px">' +
+        '<button class="btn small primary" data-ser-approve="' + req.id + '">승인 (DB 반영)</button>' +
+        '<button class="btn small" data-ser-reject="' + req.id + '">반려</button>' +
+      "</div>";
+    } else if (mode === "mine" && req.status === "PENDING") {
+      actions = '<div class="btn-row" style="margin-top:6px"><button class="btn small" data-ser-cancel="' + req.id + '">요청 취소</button></div>';
+    }
+    return (
+      '<div class="filter-bar" style="align-items:flex-start;flex-direction:column;border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:8px;background:var(--surface-2)">' +
+        '<div style="display:flex;justify-content:space-between;width:100%;gap:8px;flex-wrap:wrap"><div style="font-size:12.5px">' + meta + "</div>" + chip + "</div>" +
+        '<div style="font-size:12.5px;margin-top:4px">' + specEntryRequestSummary(req) + "</div>" +
+        decided + actions +
+      "</div>"
+    );
+  }
+  function wireSpecEntryRequestActions(main, owner) {
+    Array.prototype.forEach.call(main.querySelectorAll("[data-ser-approve]"), function (b) {
+      b.onclick = function () {
+        var req = state.specEntryRequests.filter(function (r) { return r.id === b.dataset.serApprove; })[0];
+        if (!req) return;
+        b.disabled = true;
+        approveSpecEntryRequest(req, owner).then(render).catch(function (e) { b.disabled = false; alert("승인 실패: " + (e && e.message ? e.message : e)); });
+      };
+    });
+    Array.prototype.forEach.call(main.querySelectorAll("[data-ser-reject]"), function (b) {
+      b.onclick = function () {
+        var req = state.specEntryRequests.filter(function (r) { return r.id === b.dataset.serReject; })[0];
+        if (!req) return;
+        var note = prompt("반려 사유를 입력해 주세요(선택 — 기술팀 담당자에게 그대로 보여집니다):") || "";
+        b.disabled = true;
+        rejectSpecEntryRequest(req, owner, note).then(render).catch(function (e) { b.disabled = false; alert("반려 실패: " + (e && e.message ? e.message : e)); });
+      };
+    });
+    Array.prototype.forEach.call(main.querySelectorAll("[data-ser-cancel]"), function (b) {
+      b.onclick = function () {
+        var req = state.specEntryRequests.filter(function (r) { return r.id === b.dataset.serCancel; })[0];
+        if (!req) return;
+        if (!confirm("이 요청을 취소할까요?")) return;
+        b.disabled = true;
+        cancelSpecEntryRequest(req).then(render).catch(function (e) { b.disabled = false; alert("취소 실패: " + (e && e.message ? e.message : e)); });
+      };
+    });
+  }
+  // TECH_LEAD("내 요청 현황")·ADMIN("전체 승인 대기") 화면 하단에 붙는 공용 패널
+  function renderSpecEntryRequestsSection(owner) {
+    if (owner.role === "TECH_LEAD") {
+      var mine = state.specEntryRequests.filter(function (r) { return r.requestedById === owner.id; })
+        .sort(function (a, b) { return (b.requestedAt || "").localeCompare(a.requestedAt || ""); }).slice(0, 20);
+      return '<div class="panel"><h2>내 요청 현황</h2>' +
+        (mine.length ? mine.map(function (r) { return renderSpecEntryRequestCard(r, "mine"); }).join("") : '<p class="auto-note">아직 제출한 요청이 없습니다.</p>') +
+      "</div>";
+    }
+    if (owner.role === "ADMIN") {
+      var pending = specEntryRequestsForApprover(owner);
+      return '<div class="panel"><h2>전체 승인 대기 (' + pending.length + "건) — 기술팀 제출분</h2>" +
+        (pending.length ? pending.map(function (r) { return renderSpecEntryRequestCard(r, "review"); }).join("") : '<p class="auto-note">승인 대기 중인 요청이 없습니다.</p>') +
+      "</div>";
+    }
+    return "";
+  }
+  // 건설팀 담당자 전용 — 입력 화면 없이 승인 대기 검토만 한다
+  function renderSpecEntryApprovalOnlyPage(main, owner) {
+    var pending = specEntryRequestsForApprover(owner);
+    var history = state.specEntryRequests.filter(function (r) { return r.status !== "PENDING" && (owner.majorProcesses || []).indexOf(r.dept) !== -1; })
+      .sort(function (a, b) { return (b.decidedAt || "").localeCompare(a.decidedAt || ""); }).slice(0, 30);
+    main.innerHTML =
+      '<div class="page">' +
+        '<h1 style="font-size:19px;margin-bottom:4px">제원 수기입력 — 승인 대기</h1>' +
+        '<p style="font-size:12.5px;color:var(--ink-muted);margin:0 0 16px">기술팀 담당자가 "제원 수기입력" 탭에서 제출한 추가·수정·삭제 요청 중, 담당 대공정(' + esc((owner.majorProcesses || []).join(", ") || "미지정") + ')에 해당하는 요청입니다. <b>승인</b>하면 그 자리에서 제원 DB에 반영되고, <b>반려</b>하면 DB는 바뀌지 않고 기술팀에게 반려 상태로 보여집니다.</p>' +
+        '<div class="panel"><h2>승인 대기 (' + pending.length + "건)</h2>" +
+          (pending.length ? pending.map(function (r) { return renderSpecEntryRequestCard(r, "review"); }).join("") : '<div class="empty-state"><div class="big">✅</div>승인 대기 중인 요청이 없습니다.</div>') +
+        "</div>" +
+        '<div class="panel"><h2>최근 처리 이력</h2>' +
+          (history.length ? history.map(function (r) { return renderSpecEntryRequestCard(r, "none"); }).join("") : '<p class="auto-note">아직 처리한 요청이 없습니다.</p>') +
+        "</div>" +
+      "</div>";
+    wireSpecEntryRequestActions(main, owner);
+  }
   // 항목 한 건을 편집 가능한 입력들로 렌더링 — 대분류 스키마가 있으면 그 필드 구성을, 없으면(예: 표준
-  // 대분류를 벗어난 옛 업로드 데이터) 있는 필드를 모두 보여준다.
-  function renderSpecEntryItemRow(idx, it) {
+  // 대분류를 벗어난 옛 업로드 데이터) 있는 필드를 모두 보여준다. isDirect가 false(기술팀)면 저장/삭제가
+  // 곧장 반영되지 않고 승인 요청을 만들 뿐이라 버튼 문구를 "…요청"으로 바꾸고, 이미 이 항목에 대한
+  // 승인 대기 요청이 있으면(pendingReq) 중복 요청을 막기 위해 버튼을 비활성화하고 그 내용을 보여준다.
+  function renderSpecEntryItemRow(idx, it, pendingReq, isDirect) {
     var schema = CATEGORY_ITEM_SCHEMA[it.category];
     var keyField = schema ? schema.keyField : (itemKeyField(it).name || "성상명");
     var keyOptions = schema ? categoryKeyOptions(it.category) : null;
@@ -4033,20 +4321,26 @@
       var v = it[f];
       return '<div class="field"><label class="field-label">' + esc(f) + '</label><input class="text se-input" data-field="' + esc(f) + '" value="' + esc(v == null ? "" : v) + '"></div>';
     }).join("");
+    var pendingNote = pendingReq
+      ? '<div class="auto-note" style="width:100%;margin-bottom:8px;color:var(--warn)">⏳ 이 항목은 변경 요청이 건설팀 담당자 승인 대기 중입니다 — ' + specEntryRequestSummary(pendingReq) + "</div>"
+      : "";
+    var saveLabel = isDirect ? "저장" : "변경 승인 요청";
+    var deleteLabel = isDirect ? "삭제" : "삭제 승인 요청";
     return (
       '<div class="filter-bar" style="align-items:flex-end;border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:8px;background:var(--surface-2)" data-se-row="' + idx + '">' +
+        pendingNote +
         '<div class="field"><label class="field-label">' + esc(keyField) + '</label>' + keyControl + "</div>" +
         fieldControls +
         '<div class="field"><label class="field-label">설비모듈</label><input class="text se-input" data-field="설비모듈" value="' + esc(it.설비모듈 == null ? "" : it.설비모듈) + '"></div>' +
         '<div class="field" style="max-width:90px"><label class="field-label">설비대수</label><input class="text se-input" data-field="설비대수" value="' + esc(it.설비대수 == null ? "" : it.설비대수) + '"></div>' +
         '<div class="btn-row">' +
-          '<button class="btn small primary" data-se-save="' + idx + '">저장</button>' +
-          '<button class="btn small" data-se-delete="' + idx + '">삭제</button>' +
+          '<button class="btn small primary" data-se-save="' + idx + '"' + (pendingReq ? " disabled" : "") + ">" + saveLabel + "</button>" +
+          '<button class="btn small" data-se-delete="' + idx + '"' + (pendingReq ? " disabled" : "") + ">" + deleteLabel + "</button>" +
         "</div>" +
       "</div>"
     );
   }
-  function renderSpecEntryAddForm(category) {
+  function renderSpecEntryAddForm(category, isDirect) {
     var schema = CATEGORY_ITEM_SCHEMA[category];
     if (!schema) return "";
     var keyOptions = categoryKeyOptions(category);
@@ -4063,18 +4357,21 @@
         '<div class="field"><label class="field-label">설비모듈</label><input class="text" id="seNewModule" placeholder="예: MAIN"></div>' +
         '<div class="field" style="max-width:90px"><label class="field-label">설비대수</label><input class="text" id="seNewEquip" value="1"></div>' +
       "</div>" +
-      '<div class="btn-row" style="margin-top:8px"><button class="btn primary small" id="seAddItemBtn">+ 항목 추가</button></div>'
+      '<div class="btn-row" style="margin-top:8px"><button class="btn primary small" id="seAddItemBtn">' + (isDirect ? "+ 항목 추가" : "+ 항목 추가 승인 요청") + "</button></div>"
     );
   }
   function renderSpecEntryPage(main) {
     var owner = currentOwner();
-    var allowed = owner && (owner.role === "TECH_LEAD" || owner.role === "ADMIN");
+    var allowed = owner && (owner.role === "TECH_LEAD" || owner.role === "CONSTRUCTION_LEAD" || owner.role === "ADMIN");
     if (!allowed) {
       main.innerHTML =
-        '<div class="page"><h1 style="font-size:19px">제원 수기입력</h1><div class="panel"><p class="gate-note">이 화면은 협의된 제원 접수 양식(엑셀)이 아닌 형태로 들어온 제원을 <b>기술팀 담당자</b>가 직접 추가·수정·삭제하는 화면입니다. 상단에서 기술팀 또는 관리자 계정을 선택해 주세요' +
+        '<div class="page"><h1 style="font-size:19px">제원 수기입력</h1><div class="panel"><p class="gate-note">이 화면은 협의된 제원 접수 양식(엑셀)이 아닌 형태로 들어온 제원을 <b>기술팀 담당자</b>가 직접 추가·수정·삭제 "요청"하고, 담당 대공정의 <b>건설팀 담당자</b>가 승인해야 실제 제원 DB에 반영되는 화면입니다. 상단에서 기술팀·건설팀 또는 관리자 계정을 선택해 주세요' +
           (owner ? " (현재: " + esc(owner.name) + ", " + ROLE_LABEL[owner.role] + ")" : " (현재: 미선택)") + ".</p></div></div>";
       return;
     }
+    if (owner.role === "CONSTRUCTION_LEAD") { renderSpecEntryApprovalOnlyPage(main, owner); return; }
+
+    var isDirect = owner.role === "ADMIN"; // 관리자만 승인 절차 없이 곧장 반영(최상위 역할이므로 예외)
     var form = state.specEntryForm;
     var deptOptions = (owner.role === "TECH_LEAD" && (owner.majorProcesses || []).length) ? owner.majorProcesses : MAJOR_PROCESSES;
     if (owner.role === "TECH_LEAD" && deptOptions.length === 1 && !form.dept) form.dept = deptOptions[0];
@@ -4082,11 +4379,25 @@
     var codesForDept = deptVal ? sheetList().filter(function (s) { return s.dept === deptVal; }).map(function (s) { return s.code; }).sort() : [];
     var codeVal = (!form.isNewCode && deptVal && codesForDept.indexOf(form.code) !== -1) ? form.code : "";
     var sheet = codeVal ? state.sheets[codeVal] : null;
+    var pendingByIdx = {};
+    if (codeVal) {
+      state.specEntryRequests.forEach(function (r) {
+        if (r.code === codeVal && r.status === "PENDING" && (r.action === "UPDATE" || r.action === "DELETE")) pendingByIdx[r.itemIdx] = r;
+      });
+    }
+    // 아직 승인되지 않아 시트가 만들어지지 않은 새 건설코드에, 내가(또는 다른 기술팀이) 이미 제출해 둔
+    // 항목 추가 요청들 — "기존 항목" 자리에 대신 보여준다.
+    var candidateNewCode = form.isNewCode ? (form.newCodeValue || "").trim().toUpperCase() : "";
+    var pendingNewCodeAdds = candidateNewCode
+      ? state.specEntryRequests.filter(function (r) { return r.status === "PENDING" && r.action === "ADD" && r.isNewCode && r.code === candidateNewCode; })
+      : [];
 
     main.innerHTML =
       '<div class="page">' +
         '<h1 style="font-size:19px;margin-bottom:4px">제원 수기입력</h1>' +
-        '<p style="font-size:12.5px;color:var(--ink-muted);margin:0 0 16px">협의된 제원 접수 양식(엑셀)으로 들어오지 않은 제원을 <b>기술팀 담당자</b>가 이 화면에서 직접 추가·수정·삭제합니다. 항목 구성(대분류별 필드)은 "제원표 업로드" 탭이 인식하는 협의된 양식과 동일하게 맞춰져 있어, 여기서 입력한 값도 제원 DB·제원집계·그래프 만들기·질의응답 등 다른 화면에 업로드 데이터와 똑같이 반영됩니다.</p>' +
+        '<p style="font-size:12.5px;color:var(--ink-muted);margin:0 0 16px">협의된 제원 접수 양식(엑셀)으로 들어오지 않은 제원을 <b>기술팀 담당자</b>가 이 화면에서 직접 추가·수정·삭제' +
+          (isDirect ? "합니다" : ' "요청"합니다 — 담당 대공정의 <b>건설팀 담당자</b>가 승인해야 실제 제원 DB에 반영됩니다') +
+          '. 항목 구성(대분류별 필드)은 "제원표 업로드" 탭이 인식하는 협의된 양식과 동일하게 맞춰져 있어, ' + (isDirect ? "여기서 입력한" : "승인된") + ' 값도 제원 DB·제원집계·그래프 만들기·질의응답 등 다른 화면에 업로드 데이터와 똑같이 반영됩니다.</p>' +
         '<div class="panel">' +
           '<div class="filter-bar">' +
             '<div class="field"><label class="field-label">대공정 <span style="color:var(--error)">*필수</span></label><select id="seDept"><option value="">선택하세요</option>' +
@@ -4104,7 +4415,8 @@
                 '<div class="field"><label class="field-label">PJT</label><select id="seNewPjt">' + pjtOptions().map(function (p) { return '<option value="' + p + '"' + (p === (form.newPjt || state.selectedPjt || DEFAULT_PJT) ? " selected" : "") + ">" + p + "</option>"; }).join("") + "</select></div>" +
                 '<div class="field grow"><label class="field-label">제목</label><input class="text" id="seNewTitle" placeholder="예: ' + esc(deptVal || "") + ' 장비 제원표" value="' + esc(form.newTitle) + '"></div>' +
                 '<div class="field grow"><label class="field-label">위치</label><input class="text" id="seNewLocation" placeholder="예: 평택 · P5 ph1 · 3F" value="' + esc(form.newLocation) + '"></div>' +
-              "</div>"
+              "</div>" +
+              (!isDirect ? '<p class="auto-note" style="margin-top:8px">새 건설코드는 첫 항목 추가 요청이 승인되어야 실제로 만들어집니다.</p>' : "")
             : "") +
           '<div id="seError"></div>' +
         "</div>" +
@@ -4116,20 +4428,25 @@
                   ? CAT_ORDER.filter(function (c) { return (sheet.items || []).some(function (it) { return it.category === c; }); }).map(function (c) {
                       var rowsForCat = (sheet.items || []).map(function (it, idx) { return { it: it, idx: idx }; }).filter(function (p) { return p.it.category === c; });
                       return '<div class="item-group"><div class="cat-label"><span class="swatch"></span>' + c + " · " + rowsForCat.length + "건</div>" +
-                        rowsForCat.map(function (p) { return renderSpecEntryItemRow(p.idx, p.it); }).join("") + "</div>";
+                        rowsForCat.map(function (p) { return renderSpecEntryItemRow(p.idx, p.it, pendingByIdx[p.idx], isDirect); }).join("") + "</div>";
                     }).join("")
                   : '<p class="auto-note">' + (form.isNewCode ? "새 건설코드입니다 — 아래에서 첫 항목을 추가하세요." : "이 건설코드에 아직 항목이 없습니다.") + "</p>") +
+                (pendingNewCodeAdds.length
+                  ? '<div style="margin-top:10px"><div class="cat-label"><span class="swatch"></span>승인 대기 중인 신규 항목 · ' + pendingNewCodeAdds.length + "건</div>" +
+                      pendingNewCodeAdds.map(function (r) { return renderSpecEntryRequestCard(r, "mine"); }).join("") + "</div>"
+                  : "") +
               "</div>" +
               '<div class="panel">' +
                 "<h2>새 항목 추가</h2>" +
                 '<div class="filter-bar"><div class="field"><label class="field-label">대분류 <span style="color:var(--error)">*필수</span></label><select id="seCategory"><option value="">선택하세요</option>' +
                   CAT_ORDER.map(function (c) { return '<option value="' + c + '"' + (c === form.category ? " selected" : "") + ">" + c + "</option>"; }).join("") +
                 "</select></div></div>" +
-                (form.category ? renderSpecEntryAddForm(form.category) : "") +
+                (form.category ? renderSpecEntryAddForm(form.category, isDirect) : "") +
                 '<div id="seAddError"></div>' +
               "</div>"
             )
           : "") +
+        renderSpecEntryRequestsSection(owner) +
       "</div>";
 
     function resetNewCodeFields() { form.newCodeValue = ""; form.newPjt = ""; form.newTitle = ""; form.newLocation = ""; }
@@ -4144,7 +4461,7 @@
     // 그 시점에 지워지지 않도록 매 입력마다(blur를 기다리지 않고) 상태에 동기화해 둔다 — 다시 그릴
     // 때 value로 그대로 복원된다(우측 하단 채팅 입력창의 oninput과 같은 이유).
     var newCodeValueEl = document.getElementById("seNewCodeValue");
-    if (newCodeValueEl) newCodeValueEl.oninput = function (e) { form.newCodeValue = e.target.value; };
+    if (newCodeValueEl) newCodeValueEl.oninput = function (e) { form.newCodeValue = e.target.value; render(); };
     var newPjtEl = document.getElementById("seNewPjt");
     if (newPjtEl) newPjtEl.onchange = function (e) { form.newPjt = e.target.value; };
     var newTitleEl = document.getElementById("seNewTitle");
@@ -4152,9 +4469,9 @@
     var newLocationEl = document.getElementById("seNewLocation");
     if (newLocationEl) newLocationEl.oninput = function (e) { form.newLocation = e.target.value; };
 
-    wireSpecEntryEvents(main, deptVal, codeVal, form, sheet);
+    wireSpecEntryEvents(main, deptVal, codeVal, form, sheet, owner, isDirect);
   }
-  function wireSpecEntryEvents(main, deptVal, codeVal, form, sheet) {
+  function wireSpecEntryEvents(main, deptVal, codeVal, form, sheet, owner, isDirect) {
     Array.prototype.forEach.call(main.querySelectorAll("[data-se-save]"), function (b) {
       b.onclick = function () {
         var idx = +b.dataset.seSave;
@@ -4162,21 +4479,24 @@
         var vals = readSpecEntryInputs(row);
         var errEl = document.getElementById("seError"); errEl.innerHTML = "";
         b.disabled = true;
-        specEntryUpdateItem(codeVal, idx, vals).then(function () { render(); }).catch(function (e) {
+        var action = isDirect ? specEntryUpdateItemDirect(codeVal, idx, vals) : specEntryRequestUpdate(codeVal, idx, vals, owner, sheet);
+        action.then(function () { render(); }).catch(function (e) {
           b.disabled = false;
-          errEl.innerHTML = '<p class="error-text">저장 실패: ' + esc(e && e.message ? e.message : e) + "</p>";
+          errEl.innerHTML = '<p class="error-text">' + (isDirect ? "저장" : "요청") + " 실패: " + esc(e && e.message ? e.message : e) + "</p>";
         });
       };
     });
     Array.prototype.forEach.call(main.querySelectorAll("[data-se-delete]"), function (b) {
       b.onclick = function () {
         var idx = +b.dataset.seDelete;
-        if (!confirm("이 항목을 삭제할까요? (버전 이력에는 남아 되돌아볼 수 있습니다)")) return;
+        var msg = isDirect ? "이 항목을 삭제할까요? (버전 이력에는 남아 되돌아볼 수 있습니다)" : "이 항목의 삭제를 요청할까요? (건설팀 담당자가 승인해야 실제로 삭제됩니다)";
+        if (!confirm(msg)) return;
         var errEl = document.getElementById("seError"); errEl.innerHTML = "";
         b.disabled = true;
-        specEntryDeleteItem(codeVal, idx).then(function () { render(); }).catch(function (e) {
+        var action = isDirect ? specEntryDeleteItemDirect(codeVal, idx) : specEntryRequestDelete(codeVal, idx, owner, sheet);
+        action.then(function () { render(); }).catch(function (e) {
           b.disabled = false;
-          errEl.innerHTML = '<p class="error-text">삭제 실패: ' + esc(e && e.message ? e.message : e) + "</p>";
+          errEl.innerHTML = '<p class="error-text">' + (isDirect ? "삭제" : "요청") + " 실패: " + esc(e && e.message ? e.message : e) + "</p>";
         });
       };
     });
@@ -4200,7 +4520,7 @@
       var equipRaw = (document.getElementById("seNewEquip").value || "").trim();
       newItem.설비대수 = equipRaw === "" ? 1 : coerceValue(equipRaw);
 
-      var codeToUse, sheetPatchBase;
+      var codeToUse, sheetPatchBase, isNewCode = !!form.isNewCode;
       if (form.isNewCode) {
         var newCodeVal = (document.getElementById("seNewCodeValue").value || "").trim().toUpperCase();
         if (!newCodeVal) { errEl.innerHTML = '<p class="error-text">건설코드를 입력해 주세요.</p>'; return; }
@@ -4218,15 +4538,22 @@
         sheetPatchBase = Object.assign({}, sheet);
       }
       addBtn.disabled = true;
-      specEntryAddItem(codeToUse, sheetPatchBase, newItem).then(function () {
-        form.category = ""; form.isNewCode = false; form.code = codeToUse;
-        form.newCodeValue = ""; form.newPjt = ""; form.newTitle = ""; form.newLocation = "";
+      var action = isDirect
+        ? specEntryAddItemDirect(codeToUse, sheetPatchBase, newItem)
+        : specEntryRequestAdd(codeToUse, deptVal, sheetPatchBase, newItem, isNewCode, owner);
+      action.then(function () {
+        form.category = "";
+        if (isDirect) {
+          form.isNewCode = false; form.code = codeToUse;
+          form.newCodeValue = ""; form.newPjt = ""; form.newTitle = ""; form.newLocation = "";
+        } // 승인 대기 상태에서는(비관리자) 같은 신규 건설코드에 항목을 더 추가할 수 있도록 폼을 유지한다
         render();
       }).catch(function (e) {
         addBtn.disabled = false;
-        errEl.innerHTML = '<p class="error-text">추가 실패: ' + esc(e && e.message ? e.message : e) + "</p>";
+        errEl.innerHTML = '<p class="error-text">' + (isDirect ? "추가" : "요청") + " 실패: " + esc(e && e.message ? e.message : e) + "</p>";
       });
     };
+    wireSpecEntryRequestActions(main, owner);
   }
 
   // ===================================================================
@@ -4235,7 +4562,7 @@
   function renderOwnersPage(main) {
     var owners = state.owners.slice().sort(function (a, b) { return a.name.localeCompare(b.name, "ko"); });
     var rows = owners.map(function (o) {
-      var scope = o.role === "TECH_LEAD" ? (o.majorProcesses || []).map(function (m) { return '<span class="chip dept">' + esc(m) + "</span>"; }).join(" ")
+      var scope = (o.role === "TECH_LEAD" || o.role === "CONSTRUCTION_LEAD") ? (o.majorProcesses || []).map(function (m) { return '<span class="chip dept">' + esc(m) + "</span>"; }).join(" ")
         : o.role === "DESIGNER" ? (o.disciplines || []).map(function (d) { return '<span class="chip dept">' + esc(disciplineName(d)) + "</span>"; }).join(" ") : "-";
       return "<tr><td>" + esc(o.name) + '</td><td><span class="chip role-' + o.role + '">' + ROLE_LABEL[o.role] + "</span></td><td>" + scope + "</td></tr>";
     }).join("");
@@ -4243,7 +4570,7 @@
       '<div class="page">' +
         "<h1 style=\"font-size:19px;margin-bottom:4px\">사용자 관리</h1>" +
         '<p style="font-size:12.5px;color:var(--ink-muted);margin:0 0 16px"><b>관리자</b>는 모든 데이터를 열람하고 제원표를 업로드할 수 있는 유일한 역할입니다. ' +
-          "<b>기술팀 담당자</b>는 대공정별로 질의에 답변/승인합니다. <b>설계사</b>는 공종별로 질의를 제기하고 답변/최종값을 승인합니다.</p>" +
+          "<b>기술팀 담당자</b>는 대공정별로 질의에 답변/승인하고 협의된 양식이 아닌 제원을 직접 입력합니다. <b>건설팀 담당자</b>는 대공정별로 기술팀의 제원 수기입력 요청을 검토해 승인/반려합니다(승인해야 제원 DB에 반영됩니다). <b>설계사</b>는 공종별로 질의를 제기하고 답변/최종값을 승인합니다.</p>" +
         '<div class="owners-grid">' +
           '<div class="panel"><h2>사용자 목록</h2><div style="overflow-x:auto;margin-top:10px"><table class="owner-table"><thead><tr><th>이름</th><th>역할</th><th>담당 대공정/공종</th></tr></thead><tbody>' + rows + "</tbody></table></div></div>" +
           '<div class="panel"><h2>사용자 추가</h2><div class="thread-form" style="margin-top:10px">' +
@@ -4259,7 +4586,7 @@
     function renderScopeArea() {
       var role = roleSel.value;
       var area = document.getElementById("ownerScopeArea");
-      if (role === "TECH_LEAD") {
+      if (role === "TECH_LEAD" || role === "CONSTRUCTION_LEAD") {
         area.innerHTML = '<div class="field"><label class="field-label">담당 대공정</label><div class="checkbox-grid">' +
           MAJOR_PROCESSES.map(function (mp) { return '<label><input type="checkbox" class="mpBox" value="' + mp + '">' + mp + "</label>"; }).join("") + "</div></div>";
       } else if (role === "DESIGNER") {
@@ -4277,7 +4604,7 @@
       errEl.innerHTML = "";
       if (!name) { errEl.innerHTML = '<p class="error-text">이름을 입력해 주세요.</p>'; return; }
       var role = roleSel.value;
-      var mps = role === "TECH_LEAD" ? Array.prototype.map.call(main.querySelectorAll(".mpBox:checked"), function (b) { return b.value; }) : [];
+      var mps = (role === "TECH_LEAD" || role === "CONSTRUCTION_LEAD") ? Array.prototype.map.call(main.querySelectorAll(".mpBox:checked"), function (b) { return b.value; }) : [];
       var discs = role === "DESIGNER" ? Array.prototype.map.call(main.querySelectorAll(".discBox:checked"), function (b) { return b.value; }) : [];
       store.addOwner({ name: name, role: role, majorProcesses: mps, disciplines: discs, createdAt: nowIso() }).then(render);
     };
@@ -4528,12 +4855,13 @@
   }
 
   // ===================================================================
-  // 부팅 / 실시간 구독 — 지침: DB(owners/spec_sheets/qa_threads/corrections) 값이 바뀌면
-  // 대시보드·제원 DB·SUMMARY·질의응답 등 모든 탭이 항상 자동으로 다시 그려지도록 유지한다.
-  // 아래 4개 컬렉션 리스너가 각각 render()를 호출하고, 모든 페이지 렌더 함수(renderDashboard,
+  // 부팅 / 실시간 구독 — 지침: DB(owners/spec_sheets/qa_threads/corrections/spec_entry_requests) 값이
+  // 바뀌면 대시보드·제원 DB·SUMMARY·질의응답 등 모든 탭이 항상 자동으로 다시 그려지도록 유지한다.
+  // 아래 5개 컬렉션 리스너가 각각 render()를 호출하고, 모든 페이지 렌더 함수(renderDashboard,
   // renderDbPage, computeSummary, renderQueriesPage 등)는 그때그때 state.sheets/state.threads/
-  // state.corrections를 그대로 다시 읽어 계산한다 — 페이지별로 값을 캐시해 두지 않는다. 새 탭이나
-  // 계산을 추가할 때도 이 원칙(캐시 없이 state에서 매번 새로 계산)을 지켜야 탭 간 값이 어긋나지 않는다.
+  // state.corrections/state.specEntryRequests를 그대로 다시 읽어 계산한다 — 페이지별로 값을 캐시해
+  // 두지 않는다. 새 탭이나 계산을 추가할 때도 이 원칙(캐시 없이 state에서 매번 새로 계산)을 지켜야
+  // 탭 간 값이 어긋나지 않는다.
   // ===================================================================
   var unsubs = [];
   function subscribeAll() {
@@ -4543,6 +4871,7 @@
       store.watchSheets(function (map) { state.sheets = map; render(); }),
       store.watchThreads(function (docs) { state.threads = docs; render(); }),
       store.watchCorrections(function (docs) { state.corrections = docs; render(); }),
+      store.watchSpecEntryRequests(function (docs) { state.specEntryRequests = docs; render(); }),
       store.watchGuideConfig(function (doc) { state.guideConfig = doc; render(); }),
     ];
   }
@@ -4566,6 +4895,7 @@
     renderPageNav();
     var main = document.getElementById("mainArea");
     if (state.page === "guide") renderGuidePage(main);
+    else if (state.page === "myTasks") renderMyTasksPage(main);
     else if (state.page === "dashboard") renderDashboard(main);
     else if (state.page === "db") renderDbPage(main);
     else if (state.page === "pivot") renderPivotPage(main);
