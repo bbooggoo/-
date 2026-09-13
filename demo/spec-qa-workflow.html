@@ -939,9 +939,16 @@
     });
     return result;
   }
+  // 제원표의 "적용" 여부 — 관리자가 "제원표 업로드" 탭에서 잘못 올라온 제원표를 미적용으로 돌리는 데
+  // 쓰는 플래그다. 필드가 아예 없으면(옛 데이터·시드 데이터) 적용된 것으로 취급한다(기존 동작과 동일).
+  function sheetApplied(s) { return s.applied !== false; }
   function sheetList() {
     return Object.keys(state.sheets).map(function (c) { return state.sheets[c]; })
-      .filter(function (s) { return !state.selectedPjt || s.pjt === state.selectedPjt; });
+      .filter(function (s) { return !state.selectedPjt || s.pjt === state.selectedPjt; })
+      // 미적용 제원표는 대시보드·제원 DB·SUMMARY·그래프 만들기·질의응답·수동질의 등록·제원 수기입력 등
+      // sheetList()를 쓰는 모든 화면에서 자동으로 제외된다 — "제원표 업로드" 탭의 관리 패널에서만
+      // (sheetList()를 거치지 않고 state.sheets를 직접 읽어) 미적용 상태까지 보여준다.
+      .filter(sheetApplied);
   }
   function sheetsForMp(mp) { return sheetList().filter(function (s) { return !mp || s.dept === mp; }); }
   function computeSummary(mp) {
@@ -993,6 +1000,7 @@
     var groups = {};
     Object.keys(state.sheets).forEach(function (code) {
       var sheet = state.sheets[code];
+      if (!sheetApplied(sheet)) return; // 미적용 제원표는 검증도, 자동 질의 생성 대상도 아니다
       var items = sheet.items || [];
       computeIssues(items).forEach(function (iss) {
         if (!iss.suggestedValue) return;
@@ -1403,6 +1411,7 @@
       isLive: false,
       addOwner: function (data) { var doc = Object.assign({ id: uid() }, data); owners.push(doc); notify("owners", function () { return owners.slice(); }); return Promise.resolve(doc.id); },
       setSheet: function (code, doc) { sheets[code] = Object.assign({}, doc, { code: code }); notify("sheets", function () { return Object.assign({}, sheets); }); return Promise.resolve(); },
+      deleteSheet: function (code) { delete sheets[code]; notify("sheets", function () { return Object.assign({}, sheets); }); return Promise.resolve(); },
       addThread: function (data) { var doc = Object.assign({ id: uid() }, data); threads.push(doc); notify("threads", function () { return threads.slice(); }); return Promise.resolve(doc.id); },
       updateThread: function (id, patch) { var t = threads.filter(function (x) { return x.id === id; })[0]; if (t) Object.assign(t, patch); notify("threads", function () { return threads.slice(); }); return Promise.resolve(); },
       addCorrection: function (data) { corrections.push(Object.assign({ id: uid() }, data)); notify("corrections", function () { return corrections.slice(); }); return Promise.resolve(); },
@@ -1433,6 +1442,7 @@
       isLive: true,
       addOwner: function (data) { return ownersCol.add(data).then(function (ref) { return ref.id; }); },
       setSheet: function (code, doc) { var body = Object.assign({}, doc); delete body.id; return sheetsCol.doc(code).set(body); },
+      deleteSheet: function (code) { return sheetsCol.doc(code).delete(); },
       addThread: function (data) { return threadsCol.add(data).then(function (ref) { return ref.id; }); },
       updateThread: function (id, patch) { return threadsCol.doc(id).update(patch); },
       addCorrection: function (data) { return correctionsCol.add(data); },
@@ -2198,6 +2208,17 @@
           '<figure style="margin:10px 0 0"><div class="flow-wrap">' + buildIntakeFlowSvg(nodeLabels, edgeLabels) + "</div>" +
             '<figcaption class="flow-caption">회색 마름모는 사람이 아니라 접수 형태(협의된 양식 여부)로 갈리는 분기, 초록 상자(접수④)는 제원 DB에 실제로 반영되는 지점입니다. 점선(주황) 화살표는 부분접수 시 남은 제원이 도착할 때마다 반복되는 누적 루프를 뜻합니다.</figcaption>' +
           "</figure>" +
+        "</div>" +
+        '<div class="panel">' +
+          "<h2>부분접수 누적 기준 — 접수②(제원표 업로드)</h2>" +
+          '<p class="lead" style="margin-top:4px">같은 건설코드를 다시 업로드했을 때 "기존 값을 덮어쓸지" "새 질의로 넘길지"에 대한 실제 기준입니다.</p>' +
+          '<ul style="margin:0;padding-left:18px;font-size:12.5px;color:var(--ink-muted);line-height:1.8">' +
+            '<li><b>같은 항목으로 보는 기준</b> — 대분류 + 키값(성상명/전원종류/자재명) + 설비모듈, 이 세 가지가 <b>모두</b> 같아야 같은 항목으로 판단합니다. 하나라도 다르면 별개 항목입니다.</li>' +
+            '<li><b>매칭되면 → 곧바로 덮어씁니다(자동 갱신)</b> — 값 제안·승인 같은 확인 절차 없이 새로 올라온 값으로 그 자리에서 갱신됩니다. 건설코드의 버전이 하나 올라가고, 이전 값은 "버전 이력" 탭에 그대로 보존되어 언제든 되돌아볼 수 있습니다.</li>' +
+            '<li><b>매칭되지 않으면 → 새 항목으로 추가</b> — 기존 항목은 지워지지 않고, 새로 인식된 항목만 뒤에 더해집니다(누적).</li>' +
+            '<li><b>질의(질의응답)로는 자동 전환되지 않습니다</b> — 업로드는 전적으로 자동 반영 경로라, 값이 겹쳐도 최신값으로 조용히 갱신될 뿐입니다. 검증 규칙(성상별 유량 OVER, 성상명 표준화 등)을 위반하는 항목만 "질의응답" 메뉴의 "자동 질의 일괄 생성"으로 별도 질의가 만들어집니다.</li>' +
+            '<li><b>잘못 업로드했다면</b> — "제원표 업로드" 탭 하단의 "업로드된 제원표 관리"에서 관리자가 해당 건설코드를 <b>미적용</b>으로 돌려 다른 모든 화면에서 즉시 제외한 뒤, 올바른 내용으로 같은 건설코드를 다시 업로드해 재접수하거나 <b>삭제</b>로 완전히 지우고 처음부터 다시 올릴 수 있습니다.</li>' +
+          "</ul>" +
         "</div>" +
         '<div class="panel">' +
           '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">' +
@@ -4050,8 +4071,10 @@
           '<div class="btn-row" style="margin-top:10px"><button class="btn primary" id="upSubmit">' + (state.uploadBusy ? "분석 중..." : "업로드 및 분석") + "</button></div>" +
           '<div id="upResult" style="margin-top:14px">' + renderUploadResult() + "</div>" +
         "</div>" +
+        renderUploadManageSection() +
       "</div>";
     document.getElementById("upSubmit").onclick = handleUploadSubmit;
+    wireUploadManageEvents(main);
   }
   function renderUploadResult() {
     if (!state.uploadResult) return "";
@@ -4103,6 +4126,7 @@
           location: g.location || (prevSheet && prevSheet.location) || "",
           pjt: pjtVal || (prevSheet && prevSheet.pjt) || "",
           items: merge.items, uploadedBy: owner ? owner.name : "관리자", uploadedAt: nowIso(),
+          applied: true, // 잘못 올려 미적용으로 돌려둔 건설코드를 올바른 내용으로 재업로드하면 자동으로 다시 적용 상태가 된다
         };
         return saveSheetVersion(g.code, docPatch, "UPLOAD").then(function () {
           results.push({ code: g.code, isNew: !prevSheet, added: merge.addedCount, updated: merge.updatedCount });
@@ -4117,6 +4141,109 @@
     }).catch(function (err) {
       state.uploadResult = { error: err && err.message ? err.message : String(err) };
     }).then(function () { state.uploadBusy = false; render(); });
+  }
+
+  // ---- 업로드된 제원표 관리(적용/미적용/삭제) — 지침(항상 지킬 것) ----
+  // 관리자가 잘못된 엑셀을 올렸을 때 재접수를 받을 수 있어야 한다는 요구에 따른 기능이다.
+  // - "미적용"은 값을 지우지 않는 소프트 삭제다: sheetApplied()가 false인 제원표는 sheetList()를 쓰는
+  //   모든 화면(대시보드·제원 DB·SUMMARY·그래프 만들기·질의응답 대상·수동질의 등록·제원 수기입력의
+  //   건설코드 목록)과 generateAutoQueries()에서 자동으로 빠진다 — 새 화면을 추가할 때도 제원표 목록을
+  //   가져올 때는 항상 sheetList()(또는 sheetApplied() 필터)를 거쳐야 이 규칙이 깨지지 않는다.
+  // - "삭제"는 되돌릴 수 없는 완전 삭제다(store.deleteSheet, 버전 이력까지 함께 사라진다) — 값을 보존한
+  //   채로 화면에서만 빼려면 반드시 "미적용"을 먼저 권한다.
+  // - 적용/미적용 전환은 데이터 내용이 바뀌는 게 아니라 상태 플래그만 바뀌는 것이므로 saveSheetVersion을
+  //   거치지 않는다(버전을 올리거나 versionHistory에 스냅샷을 남기지 않는다) — store.setSheet를 직접 호출한다.
+  // - 이 관리 UI(적용/미적용 버튼·삭제 버튼)는 "제원표 업로드" 탭 안에만 두고, 그 탭 자체가 이미
+  //   관리자 전용으로 게이팅되어 있으므로(renderUploadPage 상단의 owner.role !== "ADMIN" 체크) 별도의
+  //   권한 체크를 추가하지 않아도 관리자만 쓸 수 있다 — 이 UI를 다른 화면(제원표 상세 등)에 옮기게 되면
+  //   그 화면에도 반드시 같은 관리자 게이팅을 넣어야 한다.
+  function toggleSheetApplied(code) {
+    var sheet = state.sheets[code];
+    if (!sheet) return Promise.resolve();
+    var nextApplied = !sheetApplied(sheet);
+    var owner = currentOwner();
+    var newDoc = Object.assign({}, sheet, {
+      applied: nextApplied, appliedChangedBy: owner ? owner.name : "관리자", appliedChangedAt: nowIso(),
+    });
+    return store.setSheet(code, newDoc);
+  }
+  function deleteUploadedSheet(code) {
+    if (!store.deleteSheet) return Promise.reject(new Error("이 저장소에서는 삭제를 지원하지 않습니다."));
+    return store.deleteSheet(code);
+  }
+  var UPLOAD_MANAGE_LIMIT = 100;
+  // 엑셀로 업로드된(현재 버전의 출처가 UPLOAD인) 제원표만 대상으로 한다 — 시드 데이터·기술팀 수기입력
+  // 제원표는 이 관리 UI의 대상이 아니다("내가 업로드한 제원표"를 재접수하는 기능이므로). 상단 PJT
+  // 선택 범위를 그대로 따르고, sheetList()와 달리 미적용 제원표도 여기서는 그대로 보여준다(관리 대상
+  // 이므로 목록에서 빠지면 안 된다).
+  function uploadedSheetsForManage() {
+    return Object.keys(state.sheets).map(function (c) { return state.sheets[c]; })
+      .filter(function (s) { return s.versionSource === "UPLOAD"; })
+      .filter(function (s) { return !state.selectedPjt || s.pjt === state.selectedPjt; })
+      .sort(function (a, b) { return (b.updatedAt || "").localeCompare(a.updatedAt || ""); });
+  }
+  function renderUploadManageSection() {
+    var list = uploadedSheetsForManage();
+    var shown = list.slice(0, UPLOAD_MANAGE_LIMIT);
+    var rows = shown.map(function (s) {
+      var applied = sheetApplied(s);
+      return (
+        "<tr>" +
+          "<td><a class=\"code-link\" href=\"#\" data-goto-sheet-manage=\"" + esc(s.code) + "\">" + esc(s.code) + "</a> <span class=\"chip neutral\">v" + (s.ver || 1) + "</span></td>" +
+          "<td><span class=\"chip dept\">" + esc(s.dept) + "</span></td>" +
+          "<td>" + esc(s.title || "") + "</td>" +
+          "<td class=\"muted\">" + esc(s.pjt || "") + "</td>" +
+          "<td>" + (applied ? '<span class="chip ok">적용</span>' : '<span class="chip neutral">미적용</span>') + "</td>" +
+          "<td class=\"muted\" style=\"font-size:11px\">" + fmtTime(s.uploadedAt || s.updatedAt) + (s.uploadedBy ? " · " + esc(s.uploadedBy) : "") + "</td>" +
+          '<td><div class="btn-row">' +
+            '<button class="btn small" data-toggle-applied="' + esc(s.code) + '">' + (applied ? "미적용으로 전환" : "적용으로 전환") + "</button>" +
+            '<button class="btn small" style="color:var(--error);border-color:var(--error)" data-delete-sheet="' + esc(s.code) + '">삭제</button>' +
+          "</div></td>" +
+        "</tr>"
+      );
+    }).join("");
+    return (
+      '<div class="panel">' +
+        "<h2>업로드된 제원표 관리 (관리자 전용)" + (list.length ? " — " + list.length + "건" : "") + "</h2>" +
+        '<p class="lead" style="margin-top:4px">엑셀로 업로드한 제원표를 건설코드 단위로 관리합니다. 잘못 업로드했다면 <b>미적용</b>으로 돌려 대시보드·제원 DB·집계·질의 생성 등 ' +
+          "모든 화면에서 즉시 제외한 뒤(값은 그대로 보존되며 언제든 다시 적용할 수 있습니다) 올바른 내용으로 같은 건설코드로 다시 업로드해 재접수하거나, " +
+          "<b>삭제</b>로 완전히 지우고 처음부터 다시 올리세요. 상단 <b>PJT 선택</b> 범위를 그대로 따릅니다.</p>" +
+        (shown.length
+          ? '<div style="overflow-x:auto"><table class="sheet-table"><thead><tr><th>건설코드</th><th>대공정</th><th>제목</th><th>PJT</th><th>상태</th><th>업로드</th><th></th></tr></thead><tbody>' + rows + "</tbody></table></div>"
+          : '<div class="empty-state">엑셀로 업로드한 제원표가 아직 없습니다.</div>') +
+        (list.length > UPLOAD_MANAGE_LIMIT ? '<p class="auto-note" style="margin-top:8px">최근 ' + UPLOAD_MANAGE_LIMIT + "건만 표시합니다 — PJT를 선택해 좁혀 보세요.</p>" : "") +
+        '<div id="upManageMsg"></div>' +
+      "</div>"
+    );
+  }
+  function wireUploadManageEvents(main) {
+    function reportManageError(msg) {
+      var el = document.getElementById("upManageMsg");
+      if (el) el.innerHTML = '<p class="error-text">' + esc(msg) + "</p>";
+    }
+    Array.prototype.forEach.call(main.querySelectorAll("[data-toggle-applied]"), function (b) {
+      b.onclick = function () {
+        b.disabled = true;
+        toggleSheetApplied(b.dataset.toggleApplied).then(render).catch(function (e) {
+          b.disabled = false;
+          reportManageError("전환 실패: " + (e && e.message ? e.message : e));
+        });
+      };
+    });
+    Array.prototype.forEach.call(main.querySelectorAll("[data-delete-sheet]"), function (b) {
+      b.onclick = function () {
+        var code = b.dataset.deleteSheet;
+        if (!confirm("건설코드 " + code + " 제원표를 완전히 삭제할까요? 버전 이력을 포함해 되돌릴 수 없습니다 — 값을 보존한 채로 화면에서만 빼려면 대신 \"미적용으로 전환\"을 쓰세요.")) return;
+        b.disabled = true;
+        deleteUploadedSheet(code).then(render).catch(function (e) {
+          b.disabled = false;
+          reportManageError("삭제 실패: " + (e && e.message ? e.message : e));
+        });
+      };
+    });
+    Array.prototype.forEach.call(main.querySelectorAll("[data-goto-sheet-manage]"), function (el) {
+      el.addEventListener("click", function (e) { e.preventDefault(); openSheet(el.dataset.gotoSheetManage); });
+    });
   }
 
   // ===================================================================
@@ -4689,7 +4816,9 @@
         '<div class="panel" style="padding:0"><div class="rail-head"><div class="rail-head-row"><h2>제원표</h2></div></div><div class="rail-list">' + railHtml + "</div></div>" +
         '<div class="panel" style="padding:0">' +
           '<div class="workspace-head"><div><h1>' + esc(sheet.title || code) + "</h1><div class=\"meta\"><span class=\"num\">" + code + '</span><span class="chip neutral">v' + (sheet.ver || 1) + '</span>' + (sheet.pjt ? '<span class="sep">·</span><span class="chip type-AUTO">' + esc(sheet.pjt) + "</span>" : "") + '<span class="sep">·</span><span>' + esc(sheet.location || "") + '</span><span class="sep">·</span><span class="chip dept">' + esc(sheet.dept) + "</span>" +
-            (errorCount ? '<span class="chip error">OVER ' + errorCount + "건</span>" : '<span class="chip ok">기준 이내</span>') + "</div></div></div>" +
+            (errorCount ? '<span class="chip error">OVER ' + errorCount + "건</span>" : '<span class="chip ok">기준 이내</span>') +
+            (sheetApplied(sheet) ? "" : ' <span class="chip warn" title="관리자가 \'제원표 업로드\' 탭에서 미적용으로 전환해, 대시보드·제원 DB·집계·질의 등 다른 모든 화면에서 제외되어 있습니다">미적용</span>') +
+            "</div></div></div>" +
           '<div class="tabs">' + SHEET_TABS.map(function (t) {
             var badge = t.id === "issues" && issues.length ? '<span class="count">' + issues.length + "</span>"
               : t.id === "qa" && relatedThreads.length ? '<span class="count">' + relatedThreads.length + "</span>"
