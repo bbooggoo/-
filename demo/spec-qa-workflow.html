@@ -438,6 +438,29 @@
     return '<select class="' + (extraClass || "text") + '" data-field="' + esc(field) + '" data-orig="' + esc(cur) + '">' + opts + "</select>";
   }
 
+  // ---- 대분류별 협의된 제원 접수 양식의 항목 구성(키 필드 + 값 필드들) — "제원표 업로드" 탭이 엑셀
+  // 헤더에서 인식하는 필드 구성과 정확히 같은 것을, "제원 수기입력" 탭(협의된 양식이 아닌 형태로 들어온
+  // 제원을 기술팀이 직접 입력하는 화면)이 폼으로 그대로 재현하는 데 쓴다 — 두 입력 경로 모두 결국 같은
+  // 제원 항목 구조(state.sheets[code].items)로 저장되므로, 여기서 스키마를 갈라두면 안 된다. ----
+  var CATEGORY_ITEM_SCHEMA = {
+    "GAS/AIR": { keyField: "성상명", fields: ["유량", "배관수량", "압력", "배관재질"] },
+    "POWER": { keyField: "전원종류", keyOptions: ["AC", "DC"], fields: ["전력값", "부하전류", "전압", "차단기전류"] },
+    "EXHAUST": { keyField: "성상명", fields: ["풍량", "포트 수량"] },
+    "SPECIALITY GAS": { keyField: "자재명", fields: ["배관수량", "유량"] },
+    "WATER": { keyField: "성상명", fields: ["유량", "배관수량", "압력"] },
+    "CHEMICAL": { keyField: "성상명", fields: ["실사용량"] },
+    "UPW": { keyField: "성상명", fields: ["실사용량"] },
+    "폐액": { keyField: "자재명", fields: ["실사용량"] },
+    "WASTE WATER": { keyField: "성상명", fields: ["유량", "배관수량"] },
+  };
+  // 대분류의 키 필드(성상명/전원종류/자재명) 콤보박스 선택지 — 표준화 목록(STANDARD_VALUE_OPTIONS)이
+  // 있으면 그걸 그대로 쓰고, POWER처럼 별도 표준화 목록이 없는 대분류는 스키마의 keyOptions를 쓴다.
+  function categoryKeyOptions(category) {
+    var schema = CATEGORY_ITEM_SCHEMA[category];
+    if (!schema) return null;
+    return schema.keyOptions || standardOptionsFor(category, schema.keyField);
+  }
+
   // services/aggregation.py AGGREGATION_SPECS 와 동일
   var AGG_SPECS = {
     "POWER": { unit: "KW", groupBy: "전원종류", fields: ["전력값"] },
@@ -757,6 +780,14 @@
     // 마찬가지로 제출 시점에 DOM에서 바로 읽는다(중간에 렌더가 끼어도 입력 중이던 값이 사라지지 않도록).
     // itemKey는 "시트코드#행번호" 문자열이거나(개별 항목 선택), "__ALL__"이면 일괄(bulk) 적용을 뜻한다.
     manualQueryForm: { dept: "", code: "", module: "", itemKey: "", field: "" },
+    // "제원 수기입력" 탭 — 협의된 제원 접수 양식(엑셀)이 아닌 형태로 들어온 제원을 기술팀 담당자가
+    // 직접 추가/수정/삭제한다. dept/code/isNewCode/category는 선택이 바뀔 때마다 하위 UI를 다시
+    // 그려야 해서 상태로 갖고 있다. 새 건설코드값/PJT/제목/위치도 상태로 들고 있는데, 이 값들을 입력한
+    // "뒤에" 대분류(category) 선택이 페이지 전체를 다시 그리기 때문에(다른 폼처럼 "맨 마지막에 읽는
+    // 값"이 아니라 위쪽 필드) — 상태에 없으면 대분류를 고르는 순간 입력해 둔 값이 지워져 버린다. 그
+    // 외의 항목 값 입력 필드(새 항목의 필드/설비모듈/설비대수 등)는 그 뒤로 다시 그려질 일이 없어
+    // 다른 폼과 마찬가지로 추가 버튼을 누를 때 DOM에서 바로 읽는다.
+    specEntryForm: { dept: "", code: "", isNewCode: false, category: "", newCodeValue: "", newPjt: "", newTitle: "", newLocation: "" },
   };
 
   var store = null;
@@ -1450,6 +1481,7 @@
     { id: "queries", label: "질의응답" },
     { id: "manualQuery", label: "수동질의 등록" },
     { id: "upload", label: "제원표 업로드" },
+    { id: "specEntry", label: "제원 수기입력" },
     { id: "owners", label: "사용자 관리" },
   ];
   function goPage(id) {
@@ -1484,7 +1516,8 @@
     var owner = currentOwner();
     document.getElementById("pageNav").innerHTML = PAGES.map(function (p) {
       var dim = (p.id === "upload" && (!owner || owner.role !== "ADMIN"))
-        || (p.id === "manualQuery" && (!owner || (owner.role !== "DESIGNER" && owner.role !== "ADMIN")));
+        || (p.id === "manualQuery" && (!owner || (owner.role !== "DESIGNER" && owner.role !== "ADMIN")))
+        || (p.id === "specEntry" && (!owner || (owner.role !== "TECH_LEAD" && owner.role !== "ADMIN")));
       var cls = "nav-btn" + (state.page === p.id ? " active" : "") + (dim ? " dim" : "");
       return '<button class="' + cls + '" data-page="' + p.id + '">' + p.label + (dim ? " 🔒" : "") + "</button>";
     }).join("");
@@ -1549,6 +1582,14 @@
     NS2: ["Ⓝ② 기술팀 서술형 답변", "(ANSWERED)"],
     NSD: ["설계사 최종검증", "답변에 이상 없음?"],
     NSOK: ["Ⓝ③ 해결됨 (RESOLVED)", "제원 DB 변경 없이 종결"],
+    // ---- 제원 접수(업로드/수기입력) 전용 흐름 도형 — 아래 buildIntakeFlowSvg에서만 쓰인다. 처음부터
+    // 100% 풀패키지 제원이 오지 않고 부분접수되는 경우를 반영한 것으로, 위 SPEC/NON_SPEC 질의 흐름보다
+    // 앞단(제원 DB 자체가 채워지는 단계)을 그린다. ----
+    IN1: ["접수① 제원표 도착", "(전체 또는 부분 접수)"],
+    INQ: ["협의된 제원 접수 양식", "(표준 엑셀)인가?"],
+    IN_UP: ["접수② 제원표 업로드", "자동 파싱 · 기존 항목에 누적"],
+    IN_MANUAL: ["접수③ 제원 수기입력", "기술팀이 같은 양식으로", "직접 추가/수정/삭제"],
+    IN_DB: ["접수④ 제원 DB 반영", "버전 +1 · 검증 규칙 실행"],
   };
   var NODE_LABEL_DESC = {
     A1: "① AUTO 질의 박스", M1: "② MANUAL 질의 박스", D1: "기술팀 확인 분기(AUTO)", TE1: "③ AUTO 즉시종결 박스",
@@ -1556,17 +1597,25 @@
     D_FINAL: "설계사 최종확인 분기", TFINAL: "⑥ 최종 종결 박스",
     NS1: "[제원 무관] Ⓝ① 일반 질의 등록 박스", NS2: "[제원 무관] Ⓝ② 기술팀 서술형 답변 박스",
     NSD: "[제원 무관] 설계사 최종검증 분기", NSOK: "[제원 무관] Ⓝ③ 최종 종결 박스",
+    IN1: "[제원 접수] 접수① 제원표 도착 박스", INQ: "[제원 접수] 협의된 양식 여부 분기",
+    IN_UP: "[제원 접수] 접수② 제원표 업로드 박스", IN_MANUAL: "[제원 접수] 접수③ 제원 수기입력 박스",
+    IN_DB: "[제원 접수] 접수④ 제원 DB 반영 박스",
   };
   var DEFAULT_EDGE_LABELS = {
     toDecision: ["아니오 → 기술팀이", "곧장 값 제안"],
     designerRequery: ["재질의", "(기술팀이 다시 처리)"],
     nsRequery: ["재질의", "(기술팀 재답변)"],
+    inPartial: ["부분접수 —", "남은 항목 도착 시", "반복해서 누적"],
   };
   var EDGE_LABEL_DESC = {
     toDecision: "①→④ 화살표: AUTO 질의에 특이사항 있음 → 기술팀 처리로", designerRequery: "⑤→④ 되돌이 화살표: 설계사 반려 시 기술팀 재처리",
     nsRequery: "[제원 무관] 되돌이 화살표: 설계사 최종검증에서 이상 발견 시 기술팀 재답변",
+    inPartial: "[제원 접수] 되돌이 화살표: 부분접수 시 남은 제원이 도착할 때마다 반복",
   };
   var DEFAULT_GUIDE_STEPS = [
+    { id: "s0a", num: "접수①", role: "시스템", title: "제원 접수 — 부분접수 가능", desc: "처음부터 100% 풀패키지 제원표가 한 번에 들어오는 것이 아니라, 같은 건설코드로 여러 차례에 걸쳐 조금씩(부분접수) 들어올 수 있습니다. 접수 시점에 협의된 제원 접수 양식(표준 엑셀)인지 아닌지에 따라 아래 접수②/접수③ 두 경로 중 하나로 제원 DB에 반영됩니다." },
+    { id: "s0b", num: "접수②", role: "관리자", title: "제원표 업로드 — 자동 파싱 + 누적", desc: "협의된 양식(표준 엑셀)으로 들어오면 \"제원표 업로드\" 탭에 그대로 올립니다. 이미 있는 건설코드를 다시 올리면 기존 항목을 지우지 않고, 대분류·성상명(또는 전원종류/자재명)·설비모듈이 같은 항목은 최신값으로 갱신하고 다른 항목은 새로 추가합니다 — 부분접수분이 자동으로 누적됩니다." },
+    { id: "s0c", num: "접수③", role: "기술팀", title: "제원 수기입력 — 협의된 양식이 아닐 때", desc: "메일·구두·비정형 문서 등 협의된 엑셀 양식이 아닌 형태로 제원이 들어오면 \"제원 수기입력\" 탭에서 기술팀 담당자가 직접 항목을 추가·수정·삭제합니다. 항목 구성(대분류별 필드)은 업로드 탭과 똑같은 협의된 양식을 그대로 따르므로, 이렇게 입력한 값도 제원 DB·집계·질의응답에 업로드 데이터와 동일하게 반영됩니다." },
     { id: "s1", num: "①", role: "시스템", title: "AUTO 질의 자동 생성", desc: "검증 규칙(성상별 유량 OVER, 성상명 표준화 등)을 위반한 항목을 시스템이 스스로 찾아 AS-IS→TO-BE 값을 계산하고 대공정 담당 기술팀 앞으로 질의를 일괄 생성합니다. 설계사 개입 없이 바로 기술팀 확인 단계로 넘어갑니다." },
     { id: "s2", num: "①→③", role: "기술팀", title: "AUTO 질의 확인 (특이사항 없음)", desc: "\"확인\" 버튼 한 번으로 TO-BE 값이 그 자리에서 제원 DB에 반영되고 질의가 즉시 해결됩니다. 본인이 담당하는 대공정의 질의만 확인할 수 있습니다." },
     { id: "s3", num: "①→④", role: "기술팀", title: "AUTO 질의에 특이사항 있음 → 곧장 값 제안", desc: "시스템이 계산한 TO-BE 값이 틀렸거나 다른 값이 맞다고 판단되면, 사유만 남기고 넘어가는 중간 단계 없이 올바른 값을 바로 입력해 제안합니다. 수동 질의로 전환되며 곧장 \"값 제안됨\" 상태로 시작해 설계사 최종확인만 받으면 됩니다. 성상명·자재명은 표준 목록 콤보박스에서만 고를 수 있습니다." },
@@ -1814,6 +1863,90 @@
       "</svg>"
     );
   }
+  // ---- 제원 접수(업로드/수기입력) 흐름도 — 위 두 흐름(SPEC/NON_SPEC 질의 처리)보다 앞단, 즉 제원
+  // DB 자체가 처음 채워지는 단계를 그린다. 처음부터 100% 풀패키지 제원이 한 번에 오지 않고 부분접수될
+  // 수 있다는 점을 반영해, 제원 DB 반영(접수④) 이후에도 남은 제원이 도착할 때마다 접수①로 되돌아가는
+  // 점선 루프를 넣었다. buildFlowSvg 상단의 배치 지침(겹침 방지 5가지)을 그대로 따른다. ----
+  function buildIntakeFlowSvg(nodeLabels, edgeLabels) {
+    function lineTspans(cx, lines, lineH) {
+      return lines.map(function (t, i) {
+        var dy = i === 0 ? (lines.length > 1 ? -((lines.length - 1) * lineH) / 2 : 0) : lineH;
+        return '<tspan x="' + cx + '" dy="' + dy + '">' + esc(t) + "</tspan>";
+      }).join("");
+    }
+    var RECT_STYLE = {
+      neutral: ["var(--surface)", "var(--border-strong)", "var(--ink)"],
+      done: ["var(--ok-soft)", "var(--ok)", "var(--ok)"],
+    };
+    // "system"은 사람이 아니라 접수 형태 자체로 갈리는 분기라 기술팀(accent)/설계사(warn)와 다른
+    // 중립색을 쓴다.
+    var DIAMOND_STYLE = { system: ["var(--surface-2)", "var(--border-strong)", "var(--ink-muted)"] };
+    function rect(cx, cy, w, h, lines, kind) {
+      var c = RECT_STYLE[kind];
+      return (
+        '<rect x="' + (cx - w / 2) + '" y="' + (cy - h / 2) + '" width="' + w + '" height="' + h + '" rx="10" fill="' + c[0] + '" stroke="' + c[1] + '" stroke-width="1.5"/>' +
+        '<text x="' + cx + '" y="' + cy + '" text-anchor="middle" font-size="12.5" font-weight="600" fill="' + c[2] + '">' + lineTspans(cx, lines, 15) + "</text>"
+      );
+    }
+    function diamond(cx, cy, hw, hh, lines, kind) {
+      var c = DIAMOND_STYLE[kind];
+      var pts = [cx + "," + (cy - hh), (cx + hw) + "," + cy, cx + "," + (cy + hh), (cx - hw) + "," + cy].join(" ");
+      return (
+        '<polygon points="' + pts + '" fill="' + c[0] + '" stroke="' + c[1] + '" stroke-width="1.5"/>' +
+        '<text x="' + cx + '" y="' + cy + '" text-anchor="middle" font-size="12" font-weight="600" fill="' + c[2] + '">' + lineTspans(cx, lines, 15) + "</text>"
+      );
+    }
+    function arrow(points, opts) {
+      opts = opts || {};
+      var dash = opts.dashed ? ' stroke-dasharray="5,4"' : "";
+      return '<polyline points="' + points + '" fill="none" stroke="' + (opts.color || "var(--ink-faint)") + '"' + dash + ' stroke-width="1.6" marker-end="url(#' + (opts.marker || "inFlowArrow") + ')"/>';
+    }
+    function label(x, y, lines, opts) {
+      opts = opts || {};
+      var color = opts.color || "var(--ink-muted)";
+      var maxLen = lines.reduce(function (m, l) { return Math.max(m, l.length); }, 0);
+      var w = Math.max(opts.w || 0, maxLen * 12 + 14), h = lines.length * 14 + 8;
+      var lineHtml = lines.map(function (t, i) { return '<tspan x="' + x + '" dy="' + (i === 0 ? 0 : 14) + '">' + esc(t) + "</tspan>"; }).join("");
+      return (
+        '<rect x="' + (x - w / 2) + '" y="' + (y - h / 2) + '" width="' + w + '" height="' + h + '" rx="4" fill="var(--surface-2)" opacity="0.95"/>' +
+        '<text x="' + x + '" y="' + (y - h / 2 + 12) + '" text-anchor="middle" font-size="11" font-weight="600" fill="' + color + '">' + lineHtml + "</text>"
+      );
+    }
+    var p = [];
+    p.push(
+      "<defs>" +
+        '<marker id="inFlowArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--ink-faint)"/></marker>' +
+        '<marker id="inFlowArrowWarn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--warn)"/></marker>' +
+      "</defs>"
+    );
+    // 접수① 제원 접수 → 협의된 양식? 분기
+    p.push(rect(380, 50, 280, 60, nodeLabels.IN1, "neutral"));
+    p.push(arrow("380,80 380,110"));
+    p.push(diamond(380, 195, 155, 85, nodeLabels.INQ, "system"));
+    // 예(협의된 양식) → 접수② 제원표 업로드. 좌측 꼭짓점(225,195)에서 왼쪽으로 내려가 IN_UP 상단으로 진입 —
+    // x=170 세로선은 마름모(x 225~535) 밖이라 겹치지 않는다.
+    p.push(arrow("225,195 170,195 170,348"));
+    p.push(label(197, 178, ["예"], { w: 26 }));
+    p.push(rect(170, 380, 240, 64, nodeLabels.IN_UP, "neutral"));
+    // 아니오(협의된 양식이 아님) → 접수③ 제원 수기입력. 우측 꼭짓점(535,195)에서 오른쪽으로 내려가 진입 —
+    // x=600 세로선도 마름모 밖이다.
+    p.push(arrow("535,195 600,195 600,344"));
+    p.push(label(565, 178, ["아니오"], { w: 40 }));
+    p.push(rect(600, 380, 260, 72, nodeLabels.IN_MANUAL, "neutral"));
+    // 두 경로 모두 접수④ 제원 DB 반영으로 합류 — 서로 다른 x지점(300/460)으로 진입시켜 화살표끼리 겹치지 않게 한다.
+    p.push(arrow("170,412 170,439 300,439"));
+    p.push(arrow("600,416 600,439 460,439"));
+    p.push(rect(380, 470, 300, 62, nodeLabels.IN_DB, "done"));
+    // 부분접수 되돌이: IN_DB 우측 변(530,470)에서 오른쪽으로 크게 우회(x=760, IN_MANUAL 우측 변
+    // 730보다 바깥)해 위로 올라간 뒤 접수① 우측 변(520,50)으로 재진입한다 — 어느 도형과도 겹치지 않는다.
+    p.push(arrow("530,470 760,470 760,50 520,50", { color: "var(--warn)", dashed: true, marker: "inFlowArrowWarn" }));
+    p.push(label(690, 260, edgeLabels.inPartial, { color: "var(--warn)", w: 140 }));
+    return (
+      '<svg viewBox="0 0 820 560" role="img" aria-label="제원 접수 흐름: 협의된 양식이면 제원표 업로드로 자동 파싱·누적하고, 아니면 제원 수기입력으로 기술팀이 직접 입력하며, 부분접수 시 남은 제원이 도착할 때마다 반복해 제원 DB에 누적됨을 보여준다">' +
+      p.join("") +
+      "</svg>"
+    );
+  }
   function renderGuideStepReadonly(step) {
     var chipClass = step.role === "기술팀" ? "role-TECH_LEAD" : step.role === "설계사" ? "role-DESIGNER" : "neutral";
     return (
@@ -1895,15 +2028,27 @@
     main.innerHTML =
       '<div class="page">' +
         "<h1 style=\"font-size:19px;margin-bottom:4px\">업무 가이드</h1>" +
-        '<p style="font-size:12.5px;color:var(--ink-muted);margin:0 0 6px">처음 이 화면을 쓰는 담당자를 위한 매뉴얼입니다. 제원 질의는 등록 시점에 ' +
+        '<p style="font-size:12.5px;color:var(--ink-muted);margin:0 0 6px">처음 이 화면을 쓰는 담당자를 위한 매뉴얼입니다. 제원은 처음부터 100% 풀패키지로 들어오지 않고 ' +
+          "<b>부분접수</b>될 수 있습니다 — 협의된 접수 양식(표준 엑셀)이면 \"제원표 업로드\" 탭에 반복해서 올려 자동으로 누적되고, " +
+          "그 양식이 아니면 \"제원 수기입력\" 탭에서 기술팀이 같은 항목 구성으로 직접 채워 넣습니다(첫 번째 흐름도). " +
+          "이렇게 제원 DB에 값이 채워진 뒤부터는 질의는 등록 시점에 " +
           "제원 DB(spec_sheets) 값을 바꾸거나(바꿀 수 있거나) 바꿀지 판단하는 내용인지를 기준으로 <b>제원 관련(SPEC)</b>과 " +
           "<b>제원 무관(NON_SPEC)</b> 두 갈래로 나뉩니다 — AUTO 질의 생성과 설계사 수동 질의 등록 모두 마찬가지입니다. " +
-          "제원 관련 질의는 등록되고 나서 최종 DB 반영으로 종결되기까지 실제로 거치는 경로(자동/수동, 재질의 루프)를 첫 번째 흐름도에, " +
-          "제원과 무관한 일반 질의는 서술형 답변과 최종검증만으로 끝나는 두 번째(더 짧은) 흐름도에 각각 담았습니다 — " +
+          "제원 관련 질의는 등록되고 나서 최종 DB 반영으로 종결되기까지 실제로 거치는 경로(자동/수동, 재질의 루프)를 두 번째 흐름도에, " +
+          "제원과 무관한 일반 질의는 서술형 답변과 최종검증만으로 끝나는 세 번째(더 짧은) 흐름도에 각각 담았습니다 — " +
           "두 흐름 모두 설계사·기술팀이 확인해야 하는 왕복 횟수를 최소화했습니다(각각 기술팀 1회 처리 → 설계사 1회 최종확인/검증). " +
           "\"질의응답\" 탭에서 보이는 상태 칩(미답변/값 제안됨/답변완료/해결됨) 문구와 그대로 대응됩니다." +
           (isAdmin ? " 관리자는 흐름도 문구와 단계별 설명을 직접 고쳐 쓸 수 있습니다." : "") + "</p>" +
         (cfg && cfg.updatedAt ? '<p style="font-size:11px;color:var(--ink-faint);margin:0 0 14px">마지막 수정: ' + esc(cfg.updatedBy || "") + " · " + fmtTime(cfg.updatedAt) + "</p>" : "") +
+        '<div class="panel">' +
+          "<h2>제원 접수 흐름 — 부분접수 포함</h2>" +
+          '<p class="lead" style="margin-top:4px">제원표가 한 번에 전부 오지 않고 여러 차례에 걸쳐 조금씩(부분접수) 들어올 수 있다는 전제로, ' +
+            "제원 DB 자체가 채워지는 단계를 보여줍니다. 협의된 양식이면 자동 누적(접수②), 아니면 기술팀 수기입력(접수③)으로 갈리고, " +
+            "두 경로 모두 제원 DB 반영(접수④)으로 합류합니다 — 남은 제원이 나중에 도착하면 점선 화살표처럼 다시 접수①부터 반복해 계속 누적됩니다.</p>" +
+          '<figure style="margin:10px 0 0"><div class="flow-wrap">' + buildIntakeFlowSvg(nodeLabels, edgeLabels) + "</div>" +
+            '<figcaption class="flow-caption">회색 마름모는 사람이 아니라 접수 형태(협의된 양식 여부)로 갈리는 분기, 초록 상자(접수④)는 제원 DB에 실제로 반영되는 지점입니다. 점선(주황) 화살표는 부분접수 시 남은 제원이 도착할 때마다 반복되는 누적 루프를 뜻합니다.</figcaption>' +
+          "</figure>" +
+        "</div>" +
         '<div class="panel">' +
           '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">' +
             "<h2>전체 처리 흐름</h2>" +
@@ -1952,6 +2097,7 @@
             "<li>건설코드/설비모듈/필드/제목으로 <b>검색</b>할 수 있고, <b>재질의 있는 것만 보기</b>로 반려가 반복된 질의만 따로 볼 수 있습니다.</li>" +
             "<li>제원 DB·제원 항목 화면에서 값이 바뀐 셀에는 <b>음영</b>이 표시되고, 커서를 대면 언제·누가·어떤 값에서 어떤 값으로 바꿨는지 보입니다.</li>" +
             "<li>상단 <b>PJT 선택</b>으로 사업장·단계를 좁히면 대시보드·SUMMARY·제원 DB·질의응답이 전부 그 PJT 데이터만 보여줍니다.</li>" +
+            "<li>같은 건설코드를 <b>\"제원표 업로드\"</b> 탭에 다시 올리면(부분접수) 기존 항목은 지워지지 않고 그대로 <b>누적</b>됩니다. 협의된 엑셀 양식이 아닌 제원은 <b>\"제원 수기입력\"</b> 탭에서 기술팀 담당자가 같은 항목 구성으로 직접 추가·수정·삭제할 수 있습니다.</li>" +
           "</ul>" +
         "</div>" +
       "</div>";
@@ -3693,8 +3839,40 @@
   }
 
   // ===================================================================
-  // 업로드 (관리자 전용)
+  // 업로드 (관리자 전용) — 부분접수 누적(accumulate) 지원
+  // 처음부터 100% 풀패키지 제원이 한 번에 들어오는 게 아니라, 같은 건설코드로 여러 번에 걸쳐 조금씩
+  // (부분접수) 들어올 수 있다. 그래서 이미 존재하는 건설코드를 다시 업로드하면 기존 항목을 통째로
+  // 덮어쓰지 않고, 새로 들어온 항목만큼 "누적"한다 — 대분류+키값(성상명/전원종류/자재명)+설비모듈이
+  // 같은 항목이면 최신값으로 갱신(같은 항목의 정정으로 간주), 다르면 새 항목으로 추가한다.
   // ===================================================================
+  // 항목을 구분하는 매칭 키 — 제원 DB 화면 등에서 항목을 대표하는 키(itemKeyField)에 설비모듈까지
+  // 더한 것이다(같은 성상명이라도 설비모듈이 다르면 서로 다른 배관/설비이므로 별개 항목으로 본다).
+  function specItemMatchKey(it) {
+    var key = itemKeyField(it);
+    return [it.category || "", key.value || "", it.설비모듈 || ""].join("||");
+  }
+  // 기존 항목 배열에 새로 들어온 항목들을 누적한다 — 매칭 키가 같으면 그 항목의 값을 새 값으로
+  // 갱신(부분 필드만 온 경우를 대비해 얕은 병합), 없으면 새 항목으로 뒤에 추가한다. 항목 순서 자체는
+  // (제원 DB·항목 탭이 순서에 의존하지 않으므로) 크게 중요하지 않지만, 기존 항목의 자리를 그대로
+  // 유지해 버전 이력 비교가 자연스럽도록 갱신은 제자리에서, 추가는 끝에 붙인다.
+  function mergeItemsAccumulate(existingItems, newItems) {
+    var items = (existingItems || []).map(function (it) { return Object.assign({}, it); });
+    var indexByKey = {};
+    items.forEach(function (it, idx) { indexByKey[specItemMatchKey(it)] = idx; });
+    var addedCount = 0, updatedCount = 0;
+    (newItems || []).forEach(function (ni) {
+      var key = specItemMatchKey(ni);
+      if (indexByKey[key] !== undefined) {
+        items[indexByKey[key]] = Object.assign({}, items[indexByKey[key]], ni);
+        updatedCount++;
+      } else {
+        indexByKey[key] = items.length;
+        items.push(Object.assign({}, ni));
+        addedCount++;
+      }
+    });
+    return { items: items, addedCount: addedCount, updatedCount: updatedCount };
+  }
   function renderUploadPage(main) {
     var owner = currentOwner();
     if (!owner || owner.role !== "ADMIN") {
@@ -3709,7 +3887,9 @@
         '<div class="panel">' +
           '<p class="lead">실제 백엔드와 같은 파서 로직(2단 헤더 자동 인식 + 건설코드 자동 그룹핑 + 대공정 자동 판별)을 이 브라우저에서 그대로 돌립니다. ' +
             "표준 필드명과 완전히 같지 않아도(공백 차이 등) 최대한 알아보고, 그래도 낯선 열은 원본 문구 그대로 저장합니다 — 양식이 꼭 맞지 않아도 업로드 자체는 막지 않습니다. " +
-            "업로드 후 아래 <b>검수 결과</b>에서 항목명 누락·표준 대분류 이탈·검증 규칙 위반 등을 바로 확인할 수 있습니다.</p>" +
+            "업로드 후 아래 <b>검수 결과</b>에서 항목명 누락·표준 대분류 이탈·검증 규칙 위반 등을 바로 확인할 수 있습니다. " +
+            "<b>부분접수 지원:</b> 이미 있는 건설코드를 다시 업로드하면 기존 항목을 지우지 않고 그대로 <b>누적</b>합니다 — 대분류·성상명(또는 전원종류/자재명)·설비모듈이 같은 항목은 최신값으로 갱신되고, " +
+            "다른 항목은 새로 추가됩니다. 협의된 엑셀 양식이 아닌 형태로 제원이 들어오면 이 탭 대신 <b>\"제원 수기입력\"</b> 탭에서 기술팀 담당자가 같은 항목 구성으로 직접 입력할 수 있습니다.</p>" +
           '<div class="filter-bar">' +
             '<div class="field"><label class="field-label">PJT</label><select id="upPjt">' + pjtOptions().map(function (p) { return '<option value="' + p + '"' + (p === (state.selectedPjt || DEFAULT_PJT) ? " selected" : "") + ">" + p + "</option>"; }).join("") + "</select></div>" +
             '<div class="field"><label class="field-label">대공정 (기본값)</label><select id="upMp">' + MAJOR_PROCESSES.map(function (mp) { return '<option value="' + mp + '">' + mp + "</option>"; }).join("") + "</select></div>" +
@@ -3727,7 +3907,19 @@
     if (!state.uploadResult) return "";
     if (state.uploadResult.error) return '<div class="upload-result-error">' + esc(state.uploadResult.error) + "</div>";
     var r = state.uploadResult;
-    var html = '<div class="upload-result-ok">건설코드 ' + r.count + "건이 새 제원표로 추가됐습니다: " + r.codes.map(esc).join(", ") + "</div>";
+    var html = '<div class="upload-result-ok">건설코드 ' + r.count + "건을 처리했습니다";
+    if (r.newCodeCount) html += " — 신규 " + r.newCodeCount + "건";
+    if (r.accumulated.length) {
+      var addedTotal = r.accumulated.reduce(function (a, x) { return a + x.added; }, 0);
+      var updatedTotal = r.accumulated.reduce(function (a, x) { return a + x.updated; }, 0);
+      html += (r.newCodeCount ? ", " : " — ") + "기존 건설코드 " + r.accumulated.length + "건에 부분접수 누적(추가 " + addedTotal + "건 · 갱신 " + updatedTotal + "건)";
+    }
+    html += ": " + r.codes.map(esc).join(", ") + "</div>";
+    if (r.accumulated.length) {
+      html += '<ul style="margin:4px 0 0;padding-left:18px;font-size:11.5px;color:var(--ink-muted)">' +
+        r.accumulated.map(function (x) { return "<li>" + esc(x.code) + " — 기존 항목은 그대로 유지, 추가 " + x.added + "건 · 갱신 " + x.updated + "건</li>"; }).join("") +
+      "</ul>";
+    }
     if (r.warnings.length) html += "<ul style=\"margin:0;padding-left:18px\">" + r.warnings.map(function (w) { return '<li class="upload-result-warn">' + esc(w) + "</li>"; }).join("") + "</ul>";
     html += renderUploadAudit(r.audit);
     return html;
@@ -3749,17 +3941,285 @@
       var groups = parsed.groups.map(function (g) { return Object.assign({}, g, { dept: resolveMajorProcess(g.majorProcessRaw, defaultDept, parsed.warnings, g.code) }); });
       if (groups.length > 200) { parsed.warnings.push("그룹이 너무 많아(" + groups.length + "건) 처음 200건만 반영했습니다."); groups = groups.slice(0, 200); }
       var owner = currentOwner();
+      var results = [];
+      // 같은 건설코드가 이미 있으면(부분접수 재업로드) 기존 항목에 새 항목을 누적하고, 없으면
+      // (첫 접수) 그대로 새 제원표로 저장한다 — 두 경우 모두 saveSheetVersion이 버전을 하나 올린다.
       return Promise.all(groups.map(function (g) {
-        return saveSheetVersion(g.code, {
-          code: g.code, dept: g.dept, title: g.dept + " " + g.code, location: g.location, pjt: pjtVal, items: g.items,
-          uploadedBy: owner ? owner.name : "관리자", uploadedAt: nowIso(),
-        }, "UPLOAD");
+        var prevSheet = state.sheets[g.code];
+        var merge = prevSheet ? mergeItemsAccumulate(prevSheet.items || [], g.items) : { items: g.items, addedCount: g.items.length, updatedCount: 0 };
+        var docPatch = {
+          code: g.code, dept: prevSheet ? prevSheet.dept : g.dept,
+          title: (prevSheet && prevSheet.title) || (g.dept + " " + g.code),
+          location: g.location || (prevSheet && prevSheet.location) || "",
+          pjt: pjtVal || (prevSheet && prevSheet.pjt) || "",
+          items: merge.items, uploadedBy: owner ? owner.name : "관리자", uploadedAt: nowIso(),
+        };
+        return saveSheetVersion(g.code, docPatch, "UPLOAD").then(function () {
+          results.push({ code: g.code, isNew: !prevSheet, added: merge.addedCount, updated: merge.updatedCount });
+        });
       })).then(function () {
-        state.uploadResult = { count: groups.length, warnings: parsed.warnings, codes: groups.map(function (g) { return g.code; }), audit: auditParsedGroups(groups) };
+        state.uploadResult = {
+          count: groups.length, warnings: parsed.warnings, codes: groups.map(function (g) { return g.code; }), audit: auditParsedGroups(groups),
+          newCodeCount: results.filter(function (r) { return r.isNew; }).length,
+          accumulated: results.filter(function (r) { return !r.isNew; }),
+        };
       });
     }).catch(function (err) {
       state.uploadResult = { error: err && err.message ? err.message : String(err) };
     }).then(function () { state.uploadBusy = false; render(); });
+  }
+
+  // ===================================================================
+  // 제원 수기입력 (기술팀 담당자 전용) — 협의된 제원 접수 양식(엑셀)이 아닌 형태로 제원이 들어왔을 때,
+  // "제원표 업로드" 탭의 자동 파서를 거치지 못하므로 기술팀 담당자가 이 화면에서 직접 항목을
+  // 추가/수정/삭제한다. 항목 구성(대분류별 키 필드·값 필드)은 CATEGORY_ITEM_SCHEMA로 협의된 양식과
+  // 동일하게 맞춰 두어, 여기서 입력한 값도 제원 DB·제원집계·질의응답 등 다른 화면에 업로드로 들어온
+  // 값과 완전히 똑같이 반영된다(별도 저장소를 쓰지 않고 state.sheets를 그대로 갱신한다). 검증 규칙
+  // (성상별 유량 OVER 등)도 다른 항목과 동일하게 "검증 결과" 탭에서 그대로 적용된다.
+  // ===================================================================
+  function specEntryUpdateItem(code, itemIdx, changes) {
+    var sheet = state.sheets[code];
+    if (!sheet) return Promise.resolve();
+    var items = (sheet.items || []).map(function (it) { return Object.assign({}, it); });
+    var it = items[itemIdx];
+    if (!it) return Promise.resolve();
+    Object.keys(changes).forEach(function (f) { if (changes[f] == null) delete it[f]; else it[f] = changes[f]; });
+    var newDoc = Object.assign({}, sheet, { items: items });
+    return saveSheetVersion(code, newDoc, "MANUAL_ENTRY");
+  }
+  function specEntryDeleteItem(code, itemIdx) {
+    var sheet = state.sheets[code];
+    if (!sheet) return Promise.resolve();
+    var items = (sheet.items || []).slice();
+    items.splice(itemIdx, 1);
+    var newDoc = Object.assign({}, sheet, { items: items });
+    return saveSheetVersion(code, newDoc, "MANUAL_ENTRY");
+  }
+  // sheetPatchBase: 기존 건설코드면 그 시트 전체(spread), 새 건설코드면 { code, dept, title, location, pjt, items: [] }
+  function specEntryAddItem(code, sheetPatchBase, newItem) {
+    var items = (sheetPatchBase.items || []).slice();
+    items.push(newItem);
+    var newDoc = Object.assign({}, sheetPatchBase, { items: items });
+    return saveSheetVersion(code, newDoc, "MANUAL_ENTRY");
+  }
+  function readSpecEntryInputs(scopeEl) {
+    var vals = {};
+    Array.prototype.forEach.call(scopeEl.querySelectorAll(".se-input"), function (el) {
+      var f = el.dataset.field;
+      var v = (el.value || "").trim();
+      vals[f] = v === "" ? null : coerceValue(v);
+    });
+    return vals;
+  }
+  // 항목 한 건을 편집 가능한 입력들로 렌더링 — 대분류 스키마가 있으면 그 필드 구성을, 없으면(예: 표준
+  // 대분류를 벗어난 옛 업로드 데이터) 있는 필드를 모두 보여준다.
+  function renderSpecEntryItemRow(idx, it) {
+    var schema = CATEGORY_ITEM_SCHEMA[it.category];
+    var keyField = schema ? schema.keyField : (itemKeyField(it).name || "성상명");
+    var keyOptions = schema ? categoryKeyOptions(it.category) : null;
+    var fieldList = schema ? schema.fields : SPEC_FIELDS.filter(function (f) { return it[f] != null; });
+    var keyVal = it[keyField];
+    var keyControl = keyOptions
+      ? standardSelectHtml(keyField, keyOptions, keyVal, "text se-input")
+      : '<input class="text se-input" data-field="' + esc(keyField) + '" value="' + esc(keyVal == null ? "" : keyVal) + '">';
+    var fieldControls = fieldList.map(function (f) {
+      var v = it[f];
+      return '<div class="field"><label class="field-label">' + esc(f) + '</label><input class="text se-input" data-field="' + esc(f) + '" value="' + esc(v == null ? "" : v) + '"></div>';
+    }).join("");
+    return (
+      '<div class="filter-bar" style="align-items:flex-end;border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:8px;background:var(--surface-2)" data-se-row="' + idx + '">' +
+        '<div class="field"><label class="field-label">' + esc(keyField) + '</label>' + keyControl + "</div>" +
+        fieldControls +
+        '<div class="field"><label class="field-label">설비모듈</label><input class="text se-input" data-field="설비모듈" value="' + esc(it.설비모듈 == null ? "" : it.설비모듈) + '"></div>' +
+        '<div class="field" style="max-width:90px"><label class="field-label">설비대수</label><input class="text se-input" data-field="설비대수" value="' + esc(it.설비대수 == null ? "" : it.설비대수) + '"></div>' +
+        '<div class="btn-row">' +
+          '<button class="btn small primary" data-se-save="' + idx + '">저장</button>' +
+          '<button class="btn small" data-se-delete="' + idx + '">삭제</button>' +
+        "</div>" +
+      "</div>"
+    );
+  }
+  function renderSpecEntryAddForm(category) {
+    var schema = CATEGORY_ITEM_SCHEMA[category];
+    if (!schema) return "";
+    var keyOptions = categoryKeyOptions(category);
+    var keyControl = keyOptions
+      ? '<select class="text" id="seNewKey"><option value="">선택하세요</option>' + keyOptions.map(function (o) { return '<option value="' + esc(o) + '">' + esc(o) + "</option>"; }).join("") + "</select>"
+      : '<input class="text" id="seNewKey" placeholder="' + esc(schema.keyField) + ' 값">';
+    var fieldControls = schema.fields.map(function (f) {
+      return '<div class="field"><label class="field-label">' + esc(f) + '</label><input class="text se-new-field" data-field="' + esc(f) + '" placeholder="값 입력"></div>';
+    }).join("");
+    return (
+      '<div class="filter-bar" style="margin-top:10px">' +
+        '<div class="field"><label class="field-label">' + esc(schema.keyField) + ' <span style="color:var(--error)">*필수</span></label>' + keyControl + "</div>" +
+        fieldControls +
+        '<div class="field"><label class="field-label">설비모듈</label><input class="text" id="seNewModule" placeholder="예: MAIN"></div>' +
+        '<div class="field" style="max-width:90px"><label class="field-label">설비대수</label><input class="text" id="seNewEquip" value="1"></div>' +
+      "</div>" +
+      '<div class="btn-row" style="margin-top:8px"><button class="btn primary small" id="seAddItemBtn">+ 항목 추가</button></div>'
+    );
+  }
+  function renderSpecEntryPage(main) {
+    var owner = currentOwner();
+    var allowed = owner && (owner.role === "TECH_LEAD" || owner.role === "ADMIN");
+    if (!allowed) {
+      main.innerHTML =
+        '<div class="page"><h1 style="font-size:19px">제원 수기입력</h1><div class="panel"><p class="gate-note">이 화면은 협의된 제원 접수 양식(엑셀)이 아닌 형태로 들어온 제원을 <b>기술팀 담당자</b>가 직접 추가·수정·삭제하는 화면입니다. 상단에서 기술팀 또는 관리자 계정을 선택해 주세요' +
+          (owner ? " (현재: " + esc(owner.name) + ", " + ROLE_LABEL[owner.role] + ")" : " (현재: 미선택)") + ".</p></div></div>";
+      return;
+    }
+    var form = state.specEntryForm;
+    var deptOptions = (owner.role === "TECH_LEAD" && (owner.majorProcesses || []).length) ? owner.majorProcesses : MAJOR_PROCESSES;
+    if (owner.role === "TECH_LEAD" && deptOptions.length === 1 && !form.dept) form.dept = deptOptions[0];
+    var deptVal = deptOptions.indexOf(form.dept) !== -1 ? form.dept : "";
+    var codesForDept = deptVal ? sheetList().filter(function (s) { return s.dept === deptVal; }).map(function (s) { return s.code; }).sort() : [];
+    var codeVal = (!form.isNewCode && deptVal && codesForDept.indexOf(form.code) !== -1) ? form.code : "";
+    var sheet = codeVal ? state.sheets[codeVal] : null;
+
+    main.innerHTML =
+      '<div class="page">' +
+        '<h1 style="font-size:19px;margin-bottom:4px">제원 수기입력</h1>' +
+        '<p style="font-size:12.5px;color:var(--ink-muted);margin:0 0 16px">협의된 제원 접수 양식(엑셀)으로 들어오지 않은 제원을 <b>기술팀 담당자</b>가 이 화면에서 직접 추가·수정·삭제합니다. 항목 구성(대분류별 필드)은 "제원표 업로드" 탭이 인식하는 협의된 양식과 동일하게 맞춰져 있어, 여기서 입력한 값도 제원 DB·제원집계·그래프 만들기·질의응답 등 다른 화면에 업로드 데이터와 똑같이 반영됩니다.</p>' +
+        '<div class="panel">' +
+          '<div class="filter-bar">' +
+            '<div class="field"><label class="field-label">대공정 <span style="color:var(--error)">*필수</span></label><select id="seDept"><option value="">선택하세요</option>' +
+              deptOptions.map(function (mp) { return '<option value="' + mp + '"' + (mp === deptVal ? " selected" : "") + ">" + mp + "</option>"; }).join("") +
+            "</select></div>" +
+            '<div class="field"><label class="field-label">건설코드</label><select id="seCode"' + (deptVal ? "" : " disabled") + '>' +
+              '<option value="">' + (deptVal ? "선택하세요" : "대공정을 먼저 선택하세요") + "</option>" +
+              codesForDept.map(function (c) { return '<option value="' + c + '"' + (c === codeVal && !form.isNewCode ? " selected" : "") + ">" + c + "</option>"; }).join("") +
+            "</select></div>" +
+            '<div class="field"><div class="checkbox-row"><input type="checkbox" id="seNewCodeToggle"' + (form.isNewCode ? " checked" : "") + '><label for="seNewCodeToggle" style="margin:0">새 건설코드 만들기</label></div></div>' +
+          "</div>" +
+          (form.isNewCode
+            ? '<div class="filter-bar" style="margin-top:10px">' +
+                '<div class="field"><label class="field-label">건설코드 <span style="color:var(--error)">*필수</span></label><input class="text" id="seNewCodeValue" placeholder="예: PD999999" value="' + esc(form.newCodeValue) + '"></div>' +
+                '<div class="field"><label class="field-label">PJT</label><select id="seNewPjt">' + pjtOptions().map(function (p) { return '<option value="' + p + '"' + (p === (form.newPjt || state.selectedPjt || DEFAULT_PJT) ? " selected" : "") + ">" + p + "</option>"; }).join("") + "</select></div>" +
+                '<div class="field grow"><label class="field-label">제목</label><input class="text" id="seNewTitle" placeholder="예: ' + esc(deptVal || "") + ' 장비 제원표" value="' + esc(form.newTitle) + '"></div>' +
+                '<div class="field grow"><label class="field-label">위치</label><input class="text" id="seNewLocation" placeholder="예: 평택 · P5 ph1 · 3F" value="' + esc(form.newLocation) + '"></div>' +
+              "</div>"
+            : "") +
+          '<div id="seError"></div>' +
+        "</div>" +
+        (deptVal && (codeVal || form.isNewCode)
+          ? (
+              '<div class="panel">' +
+                '<h2>기존 항목' + (sheet ? " (" + (sheet.items || []).length + "건 · v" + (sheet.ver || 1) + ")" : "") + "</h2>" +
+                (sheet && (sheet.items || []).length
+                  ? CAT_ORDER.filter(function (c) { return (sheet.items || []).some(function (it) { return it.category === c; }); }).map(function (c) {
+                      var rowsForCat = (sheet.items || []).map(function (it, idx) { return { it: it, idx: idx }; }).filter(function (p) { return p.it.category === c; });
+                      return '<div class="item-group"><div class="cat-label"><span class="swatch"></span>' + c + " · " + rowsForCat.length + "건</div>" +
+                        rowsForCat.map(function (p) { return renderSpecEntryItemRow(p.idx, p.it); }).join("") + "</div>";
+                    }).join("")
+                  : '<p class="auto-note">' + (form.isNewCode ? "새 건설코드입니다 — 아래에서 첫 항목을 추가하세요." : "이 건설코드에 아직 항목이 없습니다.") + "</p>") +
+              "</div>" +
+              '<div class="panel">' +
+                "<h2>새 항목 추가</h2>" +
+                '<div class="filter-bar"><div class="field"><label class="field-label">대분류 <span style="color:var(--error)">*필수</span></label><select id="seCategory"><option value="">선택하세요</option>' +
+                  CAT_ORDER.map(function (c) { return '<option value="' + c + '"' + (c === form.category ? " selected" : "") + ">" + c + "</option>"; }).join("") +
+                "</select></div></div>" +
+                (form.category ? renderSpecEntryAddForm(form.category) : "") +
+                '<div id="seAddError"></div>' +
+              "</div>"
+            )
+          : "") +
+      "</div>";
+
+    function resetNewCodeFields() { form.newCodeValue = ""; form.newPjt = ""; form.newTitle = ""; form.newLocation = ""; }
+    document.getElementById("seDept").onchange = function (e) { form.dept = e.target.value; form.code = ""; form.isNewCode = false; form.category = ""; resetNewCodeFields(); render(); };
+    var codeSel = document.getElementById("seCode");
+    if (codeSel) codeSel.onchange = function (e) { form.code = e.target.value; form.isNewCode = false; form.category = ""; resetNewCodeFields(); render(); };
+    var newCodeToggle = document.getElementById("seNewCodeToggle");
+    if (newCodeToggle) newCodeToggle.onchange = function (e) { form.isNewCode = e.target.checked; if (form.isNewCode) form.code = ""; form.category = ""; resetNewCodeFields(); render(); };
+    var catSel = document.getElementById("seCategory");
+    if (catSel) catSel.onchange = function (e) { form.category = e.target.value; render(); };
+    // 새 건설코드 필드들은 대분류(category) 선택이 페이지 전체를 다시 그리기 전에 입력될 수 있어,
+    // 그 시점에 지워지지 않도록 매 입력마다(blur를 기다리지 않고) 상태에 동기화해 둔다 — 다시 그릴
+    // 때 value로 그대로 복원된다(우측 하단 채팅 입력창의 oninput과 같은 이유).
+    var newCodeValueEl = document.getElementById("seNewCodeValue");
+    if (newCodeValueEl) newCodeValueEl.oninput = function (e) { form.newCodeValue = e.target.value; };
+    var newPjtEl = document.getElementById("seNewPjt");
+    if (newPjtEl) newPjtEl.onchange = function (e) { form.newPjt = e.target.value; };
+    var newTitleEl = document.getElementById("seNewTitle");
+    if (newTitleEl) newTitleEl.oninput = function (e) { form.newTitle = e.target.value; };
+    var newLocationEl = document.getElementById("seNewLocation");
+    if (newLocationEl) newLocationEl.oninput = function (e) { form.newLocation = e.target.value; };
+
+    wireSpecEntryEvents(main, deptVal, codeVal, form, sheet);
+  }
+  function wireSpecEntryEvents(main, deptVal, codeVal, form, sheet) {
+    Array.prototype.forEach.call(main.querySelectorAll("[data-se-save]"), function (b) {
+      b.onclick = function () {
+        var idx = +b.dataset.seSave;
+        var row = main.querySelector('[data-se-row="' + idx + '"]');
+        var vals = readSpecEntryInputs(row);
+        var errEl = document.getElementById("seError"); errEl.innerHTML = "";
+        b.disabled = true;
+        specEntryUpdateItem(codeVal, idx, vals).then(function () { render(); }).catch(function (e) {
+          b.disabled = false;
+          errEl.innerHTML = '<p class="error-text">저장 실패: ' + esc(e && e.message ? e.message : e) + "</p>";
+        });
+      };
+    });
+    Array.prototype.forEach.call(main.querySelectorAll("[data-se-delete]"), function (b) {
+      b.onclick = function () {
+        var idx = +b.dataset.seDelete;
+        if (!confirm("이 항목을 삭제할까요? (버전 이력에는 남아 되돌아볼 수 있습니다)")) return;
+        var errEl = document.getElementById("seError"); errEl.innerHTML = "";
+        b.disabled = true;
+        specEntryDeleteItem(codeVal, idx).then(function () { render(); }).catch(function (e) {
+          b.disabled = false;
+          errEl.innerHTML = '<p class="error-text">삭제 실패: ' + esc(e && e.message ? e.message : e) + "</p>";
+        });
+      };
+    });
+    var addBtn = document.getElementById("seAddItemBtn");
+    if (addBtn) addBtn.onclick = function () {
+      var errEl = document.getElementById("seAddError"); errEl.innerHTML = "";
+      var category = form.category;
+      var schema = CATEGORY_ITEM_SCHEMA[category];
+      if (!schema) return;
+      var keyEl = document.getElementById("seNewKey");
+      var keyVal = (keyEl.value || "").trim();
+      if (!keyVal) { errEl.innerHTML = '<p class="error-text">' + esc(schema.keyField) + "을(를) 입력해 주세요.</p>"; return; }
+      var newItem = { category: category };
+      newItem[schema.keyField] = coerceValue(keyVal);
+      Array.prototype.forEach.call(main.querySelectorAll(".se-new-field"), function (el) {
+        var v = (el.value || "").trim();
+        if (v !== "") newItem[el.dataset.field] = coerceValue(v);
+      });
+      var moduleVal = (document.getElementById("seNewModule").value || "").trim();
+      if (moduleVal) newItem.설비모듈 = moduleVal;
+      var equipRaw = (document.getElementById("seNewEquip").value || "").trim();
+      newItem.설비대수 = equipRaw === "" ? 1 : coerceValue(equipRaw);
+
+      var codeToUse, sheetPatchBase;
+      if (form.isNewCode) {
+        var newCodeVal = (document.getElementById("seNewCodeValue").value || "").trim().toUpperCase();
+        if (!newCodeVal) { errEl.innerHTML = '<p class="error-text">건설코드를 입력해 주세요.</p>'; return; }
+        if (state.sheets[newCodeVal]) { errEl.innerHTML = '<p class="error-text">이미 존재하는 건설코드입니다. 위에서 그 건설코드를 선택해 항목을 추가해 주세요.</p>'; return; }
+        codeToUse = newCodeVal;
+        sheetPatchBase = {
+          code: newCodeVal, dept: deptVal,
+          title: (document.getElementById("seNewTitle").value || "").trim() || (deptVal + " " + newCodeVal),
+          location: (document.getElementById("seNewLocation").value || "").trim(),
+          pjt: document.getElementById("seNewPjt").value, items: [],
+        };
+      } else {
+        if (!codeVal) { errEl.innerHTML = '<p class="error-text">건설코드를 선택해 주세요.</p>'; return; }
+        codeToUse = codeVal;
+        sheetPatchBase = Object.assign({}, sheet);
+      }
+      addBtn.disabled = true;
+      specEntryAddItem(codeToUse, sheetPatchBase, newItem).then(function () {
+        form.category = ""; form.isNewCode = false; form.code = codeToUse;
+        form.newCodeValue = ""; form.newPjt = ""; form.newTitle = ""; form.newLocation = "";
+        render();
+      }).catch(function (e) {
+        addBtn.disabled = false;
+        errEl.innerHTML = '<p class="error-text">추가 실패: ' + esc(e && e.message ? e.message : e) + "</p>";
+      });
+    };
   }
 
   // ===================================================================
@@ -3981,13 +4441,13 @@
     return '<div style="overflow-x:auto"><table class="corr-table"><thead><tr><th>필드</th><th>변경</th><th>출처</th><th>처리자</th><th>일시</th></tr></thead><tbody>' + rows + "</tbody></table></div>";
   }
   function versionSourceLabel(src) {
-    return src === "SEED" ? "시드 데이터" : src === "UPLOAD" ? "엑셀 재업로드" : src === "AUTO" ? "자동 질의 반영" : src === "MANUAL" ? "수동 질의 반영" : (src || "-");
+    return src === "SEED" ? "시드 데이터" : src === "UPLOAD" ? "엑셀 업로드(누적)" : src === "AUTO" ? "자동 질의 반영" : src === "MANUAL" ? "수동 질의 반영" : src === "MANUAL_ENTRY" ? "기술팀 수기입력" : (src || "-");
   }
   function renderVersionsTab(sheet) {
     var history = sheet.versionHistory || [];
     var current =
       '<div class="thread-card" style="cursor:default"><span class="chip ok">v' + (sheet.ver || 1) + " · 현재</span> <span class=\"chip type-" +
-        (sheet.versionSource === "UPLOAD" ? "MANUAL" : "AUTO") + '">' + esc(versionSourceLabel(sheet.versionSource)) + "</span>" +
+        (sheet.versionSource === "UPLOAD" || sheet.versionSource === "MANUAL_ENTRY" ? "MANUAL" : "AUTO") + '">' + esc(versionSourceLabel(sheet.versionSource)) + "</span>" +
         '<div class="t-meta" style="margin-top:6px">' + (sheet.items || []).length + "건 · " + fmtTime(sheet.updatedAt) + "</div></div>";
     if (!history.length) {
       return current + '<p class="auto-note" style="margin-top:10px">이전 버전이 없습니다. 이 제원표가 재업로드되거나 질의 승인으로 값이 바뀌면 이전 상태가 여기 버전 이력으로 남습니다.</p>';
@@ -4106,6 +4566,7 @@
     else if (state.page === "queries") renderQueriesPage(main);
     else if (state.page === "manualQuery") renderManualQueryPage(main);
     else if (state.page === "upload") renderUploadPage(main);
+    else if (state.page === "specEntry") renderSpecEntryPage(main);
     else if (state.page === "owners") renderOwnersPage(main);
     else if (state.page === "sheet") renderSheetPage(main);
     renderChatWidget(); // 우측 하단 AI 챗봇 — 어느 탭이든 항상 떠 있어야 하므로 페이지 분기와 무관하게 매번 다시 그린다
