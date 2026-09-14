@@ -818,7 +818,7 @@
     corrections: [],
     specEntryRequests: [], // "제원 수기입력" 승인 대기 요청 (기술팀 제출 → 건설팀 담당자 승인/반려)
     dashFilterMp: "", dashFilterStatus: "",
-    summaryFilterMp: "", summaryAutoApplied: false, summaryTrendCategory: "",
+    summaryFilterMp: "", summaryAutoApplied: false, summaryTrendCategory: "", summaryTrendBreakdown: "",
     qFilterMp: "", qFilterDiscipline: "", qFilterType: "", qFilterNature: "", qTechAction: "", qDesignerAction: "", qSearch: "", qOpenOnly: true, qRequeryOnly: false, qAutoApplied: false,
     selectedThreadId: null,
     selectedSheet: null,
@@ -2925,6 +2925,76 @@
     var svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + W + ' ' + H + '" width="' + W + '" height="' + H + '" role="img" aria-label="피벗 막대그래프">' + p.join("") + "</svg>";
     return { svg: svg, width: W, height: H };
   }
+  // ---- 꺾은선 그래프 — 시간(PJT phase)이 하나씩 넘어감에 따른 증감추이를 보는 화면(SUMMARY 탭
+  // "대분류(UT)별 PJT 추이")에서 막대그래프 대신 쓴다. x축은 rowVals(피벗의 행, 여기서는 PJT)를 그대로
+  // 순서대로 늘어놓고, 계열(열)마다 한 줄씩 그린다 — drawPivotBar와 같은 y축 눈금·단위 표기 방식을
+  // 그대로 재사용해 같은 데이터를 막대/선 어느 쪽으로 봐도 숫자가 똑같이 읽히게 한다. 값이 없는 지점은
+  // 선을 잇지 않고 끊어(구간을 나눠) 그려 실제로 데이터가 없는 구간을 있는 것처럼 보이지 않게 한다.
+  function drawPivotLine(pivot, widthHint, unit) {
+    var seriesCount = pivot.hasCol ? pivot.colVals.length : 1;
+    var n = pivot.rowVals.length;
+    var marginL = 64, marginR = 16, marginT = 16, marginB = 58;
+    var plotH = 260;
+    var plotW = Math.max((widthHint || 640) - marginL - marginR, n * 54);
+    var W = marginL + plotW + marginR, H = marginT + plotH + marginB;
+    var vals = [];
+    pivot.matrix.forEach(function (row) { row.forEach(function (v) { if (v != null) vals.push(v); }); });
+    var maxV = vals.length ? Math.max.apply(null, vals.concat([0])) : 0;
+    var minV = vals.length ? Math.min.apply(null, vals.concat([0])) : 0;
+    var domainMax = maxV > 0 ? maxV * 1.12 : (minV < 0 ? 0 : 1);
+    var domainMin = minV < 0 ? minV * 1.12 : 0;
+    var range = (domainMax - domainMin) || 1;
+    function yFor(v) { return marginT + plotH - ((v - domainMin) / range) * plotH; }
+    var zeroY = yFor(0);
+    var step = plotW / n;
+    function xFor(ri) { return marginL + step * ri + step / 2; }
+
+    var p = [];
+    if (unit) p.push('<text x="4" y="12" font-size="10" fill="var(--ink-faint)" font-family="var(--mono)">(' + esc(unit) + ")</text>");
+    var ticks = 4;
+    for (var t = 0; t <= ticks; t++) {
+      var tv = domainMin + (range * t / ticks);
+      var ty = yFor(tv);
+      p.push('<line x1="' + marginL + '" y1="' + ty + '" x2="' + (marginL + plotW) + '" y2="' + ty + '" stroke="var(--border)" stroke-width="1"/>');
+      p.push('<text x="' + (marginL - 8) + '" y="' + (ty + 4) + '" text-anchor="end" font-size="10.5" fill="var(--ink-faint)" font-family="var(--mono)">' + esc(fmtChartVal(tv)) + "</text>");
+    }
+    p.push('<line x1="' + marginL + '" y1="' + zeroY + '" x2="' + (marginL + plotW) + '" y2="' + zeroY + '" stroke="var(--border-strong)" stroke-width="1.4"/>');
+
+    for (var si = 0; si < seriesCount; si++) {
+      var color = seriesCount > 1 ? "var(--series-" + ((si % 8) + 1) + ")" : "var(--accent)";
+      var seg = [], segs = [];
+      pivot.rowVals.forEach(function (rv, ri) {
+        var v = pivot.matrix[ri][si];
+        if (v == null) { if (seg.length) { segs.push(seg); seg = []; } return; }
+        seg.push({ x: xFor(ri), y: yFor(v), v: v, ri: ri });
+      });
+      if (seg.length) segs.push(seg);
+      segs.forEach(function (s) {
+        if (s.length > 1) {
+          var d = "M" + s[0].x + "," + s[0].y + s.slice(1).map(function (pt) { return " L" + pt.x + "," + pt.y; }).join("");
+          p.push('<path fill="none" stroke="' + color + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="' + d + '"/>');
+        }
+        s.forEach(function (pt) {
+          var rv = pivot.rowVals[pt.ri];
+          var label = (pivot.hasCol ? pivot.colVals[si] + " · " : "") + rv + ": " + fmtPivotVal(pt.v) + (unit ? " " + unit : "");
+          p.push('<circle cx="' + pt.x + '" cy="' + pt.y + '" r="4" fill="' + color + '" stroke="var(--surface)" stroke-width="1.5"><title>' + esc(label) + "</title></circle>");
+          // 계열이 하나뿐일 때만(선택적 라벨 원칙) 점 위에 값을 직접 표기한다 — 계열이 여럿이면
+          // 겹쳐 읽기 어려우므로 범례 + 커서를 올렸을 때 뜨는 title(위)로 값을 확인한다.
+          if (seriesCount === 1) {
+            p.push('<text x="' + pt.x + '" y="' + (pt.y - 8) + '" text-anchor="middle" font-size="9.5" fill="var(--ink-muted)" font-family="var(--mono)">' + esc(fmtChartVal(pt.v)) + "</text>");
+          }
+        });
+      });
+    }
+
+    pivot.rowVals.forEach(function (rv, ri) {
+      var lx = xFor(ri);
+      var short = rv.length > 9 ? rv.slice(0, 8) + "…" : rv;
+      p.push('<text x="' + lx + '" y="' + (marginT + plotH + 18) + '" text-anchor="end" font-size="10.5" fill="var(--ink-muted)" transform="rotate(-38 ' + lx + " " + (marginT + plotH + 18) + ')"><title>' + esc(rv) + "</title>" + esc(short) + "</text>");
+    });
+    var svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + W + ' ' + H + '" width="' + W + '" height="' + H + '" role="img" aria-label="피벗 꺾은선그래프">' + p.join("") + "</svg>";
+    return { svg: svg, width: W, height: H };
+  }
   function drawPivotPie(pivotForPie, unit) {
     var labels = pivotForPie.rowVals, values = pivotForPie.rowTotals.map(function (v) { return v == null ? 0 : v; });
     var W = 380, H = 300, cx = 150, cy = 150, r = 108;
@@ -3417,6 +3487,8 @@
   // 전체 PJT를 대상으로 별도 소스 행을 만든다(SUMMARY 탭의 대공정 필터만 반영). computePivot의 행
   // 정렬(가나다순)이 "P3 ph1" < "P3 ph2" < … < "P5 ph6"처럼 실제 순서와 그대로 맞아떨어지므로 별도
   // 정렬 로직 없이도 왼쪽에서 오른쪽으로 시간순 추이를 읽을 수 있다.
+  // keyField에는 itemKeyField()가 그 항목의 대분류에 맞게 고른 값(성상명/전원종류/자재명 중 하나)을
+  // 담아 둔다 — "성상별/자재명별로 보기" 세분화(breakdown)를 켰을 때 이 값을 피벗의 열(계열)로 쓴다.
   function summaryTrendRows(mp) {
     var rows = [];
     Object.keys(state.sheets).forEach(function (c) {
@@ -3424,14 +3496,16 @@
       if (!sheetApplied(s)) return;
       if (mp && s.dept !== mp) return;
       (s.items || []).forEach(function (it) {
-        rows.push({ pjt: s.pjt || "(미지정)", category: it.category, __agg__: itemAggValue(it) });
+        rows.push({ pjt: s.pjt || "(미지정)", category: it.category, keyField: itemKeyField(it).value, __agg__: itemAggValue(it) });
       });
     });
     return rows;
   }
-  function summaryTrendPivot(mp, category) {
+  // breakdown이 참이면 PJT × (성상명/전원종류/자재명)으로 세분화한 여러 계열(선)을, 아니면 지금까지처럼
+  // PJT별 합계 한 계열만 만든다.
+  function summaryTrendPivot(mp, category, breakdown) {
     var rows = summaryTrendRows(mp).filter(function (r) { return r.category === category; });
-    return computePivot(rows, "pjt", null, "__agg__", "sum");
+    return computePivot(rows, "pjt", breakdown ? "keyField" : null, "__agg__", "sum");
   }
   // renderAggCard(카드 텍스트만, 제원표 상세 "총량 집계" 탭과 공유)에 그래프 + 엑셀/PNG 다운로드·
   // PPT 복사 버튼을 더한 SUMMARY 전용 버전. HTML 문자열만 돌려주는 renderAggCard와 달리, 버튼을
@@ -3480,12 +3554,18 @@
     var s = computeSummary(state.summaryFilterMp);
     var cardExports = s.categories.map(function (a, idx) { return renderSummaryAggCard(a, state.summaryFilterMp, idx); });
     var trendCategory = CAT_ORDER.indexOf(state.summaryTrendCategory) !== -1 ? state.summaryTrendCategory : CAT_ORDER[0];
-    var trendPivot = summaryTrendPivot(state.summaryFilterMp, trendCategory);
+    // "보기 방식"을 켜면 그 대분류의 항목명 기준(성상명/전원종류/자재명 — AGG_SPECS의 groupBy를 그대로
+    // 따른다)으로 세분화해 계열(선)을 여러 개로 나눈다. 꺼져 있으면 지금까지처럼 PJT별 합계 한 선.
+    var trendGroupByLabel = AGG_SPECS[trendCategory].groupBy;
+    var trendBreakdownOn = !!state.summaryTrendBreakdown;
+    var trendPivot = summaryTrendPivot(state.summaryFilterMp, trendCategory, trendBreakdownOn);
     var trendUnit = chartUnitFor("__agg__", trendCategory);
-    var trendChart = trendPivot.rowVals.length ? drawPivotBar(trendPivot, 760, trendUnit) : null;
+    var trendChart = trendPivot.rowVals.length ? drawPivotLine(trendPivot, 760, trendUnit) : null;
     if (trendChart) trendChart.svgResolved = resolveSvgColors(trendChart.svg);
+    var trendLegendHtml = (trendChart && trendPivot.hasCol && trendPivot.colVals.length >= 2) ? renderPivotLegend(trendPivot.colVals) : "";
     var trendMeasureLabel = pivotMeasureLabel("__agg__", trendCategory);
     var trendAoa = pivotTableAoA(trendPivot, "PJT", trendMeasureLabel);
+    var trendFileTag = trendCategory + (trendBreakdownOn ? "_" + trendGroupByLabel + "별" : "");
     main.innerHTML =
       '<div class="page">' +
         "<h1 style=\"font-size:19px;margin-bottom:4px\">제원 SUMMARY</h1>" +
@@ -3525,28 +3605,36 @@
               : "") +
           "</div>" +
           '<p style="font-size:11.5px;color:var(--ink-muted);margin:6px 0 10px">PJT(사업장·단계)가 하나씩 넘어감에 따라 선택한 대분류의 총량이 어떻게 늘고 주는지 봅니다. 상단의 PJT 선택과 무관하게 항상 전체 PJT를 대상으로 하며, 위 대공정 필터는 그대로 반영됩니다.</p>' +
-          '<div class="field" style="max-width:280px"><label class="field-label">대분류(UT)</label><select id="summaryTrendCategory">' +
-            CAT_ORDER.map(function (c) { return '<option value="' + c + '"' + (c === trendCategory ? " selected" : "") + ">" + c + "</option>"; }).join("") +
-          "</select></div>" +
+          '<div class="filter-bar">' +
+            '<div class="field" style="max-width:280px"><label class="field-label">대분류(UT)</label><select id="summaryTrendCategory">' +
+              CAT_ORDER.map(function (c) { return '<option value="' + c + '"' + (c === trendCategory ? " selected" : "") + ">" + c + "</option>"; }).join("") +
+            "</select></div>" +
+            '<div class="field" style="max-width:280px"><label class="field-label">보기 방식</label><select id="summaryTrendBreakdown">' +
+              '<option value=""' + (trendBreakdownOn ? "" : " selected") + ">전체 합계</option>" +
+              '<option value="detail"' + (trendBreakdownOn ? " selected" : "") + ">" + esc(trendGroupByLabel) + "별로 보기</option>" +
+            "</select></div>" +
+          "</div>" +
           '<p id="summaryTrendCopyMsg" style="font-size:11.5px;margin:8px 0 0;min-height:14px"></p>' +
           (trendChart
-            ? '<div class="pivot-chart-wrap" style="padding:8px;margin:10px 0;overflow-x:auto">' + trendChart.svg + "</div>"
+            ? '<div class="pivot-chart-wrap" style="padding:8px;margin:10px 0;overflow-x:auto">' + trendChart.svg + "</div>" + trendLegendHtml
             : '<div class="empty-state" style="margin-top:10px">이 대분류(' + esc(trendCategory) + ")는 어느 PJT에도 데이터가 없습니다.</div>") +
         "</div>" +
       "</div>";
     document.getElementById("summaryMp").onchange = function (e) { state.summaryFilterMp = e.target.value; state.summaryAutoApplied = false; render(); };
     var trendCatSel = document.getElementById("summaryTrendCategory");
     if (trendCatSel) trendCatSel.onchange = function (e) { state.summaryTrendCategory = e.target.value; render(); };
+    var trendBreakdownSel = document.getElementById("summaryTrendBreakdown");
+    if (trendBreakdownSel) trendBreakdownSel.onchange = function (e) { state.summaryTrendBreakdown = e.target.value; render(); };
     var trendXlsxBtn = document.getElementById("summaryTrendXlsxBtn");
     if (trendXlsxBtn) trendXlsxBtn.onclick = function () {
-      saveWorkbook("UT추이_" + trendCategory + "_" + (state.summaryFilterMp || "전체대공정") + "_" + todayTag() + ".xlsx", trendCategory, trendAoa.headers, trendAoa.rows);
+      saveWorkbook("UT추이_" + trendFileTag + "_" + (state.summaryFilterMp || "전체대공정") + "_" + todayTag() + ".xlsx", trendCategory, trendAoa.headers, trendAoa.rows);
     };
     var trendPngBtn = document.getElementById("summaryTrendPngBtn");
     if (trendPngBtn) trendPngBtn.onclick = function () {
       if (!trendChart) return;
       if (!downloadsNs) { alert("이 화면에서는 다운로드를 사용할 수 없습니다. Claude 앱/웹에서 이 페이지를 열어 다시 시도해 주세요."); return; }
       svgToPngBlob(trendChart.svgResolved, trendChart.width, trendChart.height, 2).then(function (blob) {
-        return downloadsNs.save({ filename: "UT추이_" + trendCategory + "_" + todayTag() + ".png", data: blob });
+        return downloadsNs.save({ filename: "UT추이_" + trendFileTag + "_" + todayTag() + ".png", data: blob });
       }).catch(function (e) {
         if (e && e.code === "declined") return;
         alert("이미지 다운로드에 실패했습니다: " + (e && e.message ? e.message : e));
@@ -3555,7 +3643,7 @@
     var trendCopyBtn = document.getElementById("summaryTrendCopyBtn");
     if (trendCopyBtn) trendCopyBtn.onclick = function () {
       if (!trendChart) return;
-      var title = trendCategory + " · PJT별 · " + trendMeasureLabel + " 합계 추이";
+      var title = trendCategory + " · PJT별 · " + (trendBreakdownOn ? trendGroupByLabel + "별 · " : "") + trendMeasureLabel + " 합계 추이";
       reportSummaryTrendCopyResult("복사하는 중...", false);
       copyPivotToClipboard(trendChart, trendAoa, title, reportSummaryTrendCopyResult);
     };
