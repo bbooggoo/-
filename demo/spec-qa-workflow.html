@@ -1867,6 +1867,25 @@
     { id: "progress", label: "처리 현황 · 단계별 설명" },
     { id: "screens", label: "화면 기능 안내" },
   ];
+  // ---- 흐름도 도형(rect/diamond) 위에 커서를 대면 그 단계의 "단계별 설명" 항목이 툴팁으로 뜨도록,
+  // 도형의 node id(A1/M1/…)를 DEFAULT_GUIDE_STEPS의 항목 id(s1/s4/…)에 미리 이어 둔다. num(①/②→④
+  // 같은 표시 번호)이 아니라 안정적인 id로 잇는 이유는, num은 관리자가 "단계별 설명 편집"에서 자유
+  // 텍스트로 고쳐 쓸 수 있어 매칭 기준으로 쓰기엔 흔들리기 때문이다. 도형 하나가 여러 단계를 아우르면
+  // (예: D1 분기는 "예"/"아니오" 두 갈래) 그 흐름을 가장 직접적으로 설명하는 단계 하나만 골라 이었다
+  // — 관리자가 단계를 지우면 그 id는 더 이상 매칭되지 않아 해당 도형은 조용히 툴팁 없이 그려진다
+  // (stepTooltip이 빈 문자열을 돌려주면 rect/diamond가 <g><title>로 감싸지 않는다).
+  var GUIDE_NODE_STEP_MAP = {
+    IN1: ["s0a"], INQ: ["s0a"], IN_UP: ["s0b"], IN_MANUAL: ["s0c"], IN_APPR: ["s0d"],
+    A1: ["s1"], M1: ["s4"], D1: ["s3"], TE1: ["s2"], MG1: ["s5"], D_FINAL: ["s6"], TFINAL: ["s6"],
+    NS2: ["s8"], NSD: ["s9"], NSOK: ["s9"],
+  };
+  // steps(현재 유효한 단계별 설명 배열)에서 ids에 해당하는 항목들을 찾아 "번호 제목\n설명"을 이어 붙인
+  // 툴팁 문자열을 만든다 — 하나도 못 찾으면(단계가 삭제됐거나 이 노드에 매칭이 없으면) 빈 문자열.
+  function stepTooltip(steps, ids) {
+    var found = ids.map(function (id) { return steps.filter(function (s) { return s.id === id; })[0]; }).filter(Boolean);
+    if (!found.length) return "";
+    return found.map(function (s) { return (s.num ? s.num + " " : "") + s.title + "\n" + s.desc; }).join("\n\n");
+  }
   function effectiveNodeLabels() {
     return Object.assign({}, DEFAULT_NODE_LABELS, (state.guideConfig || {}).nodeLabels || {});
   }
@@ -1949,12 +1968,18 @@
   // 새 도형/화살표를 추가한 뒤에는 Playwright 등으로 실제 렌더링을 스크린샷해 확대해서 눈으로도 다시
   // 확인한다 — 좌표 계산만으로 놓치는 경우(자간·굵은 글씨로 텍스트가 라벨 너비를 넘는 경우 등)가 있다.
   // ----
-  function buildFlowSvg(nodeLabels, edgeLabels) {
+  function buildFlowSvg(nodeLabels, edgeLabels, steps) {
     function lineTspans(cx, lines, lineH) {
       return lines.map(function (t, i) {
         var dy = i === 0 ? (lines.length > 1 ? -((lines.length - 1) * lineH) / 2 : 0) : lineH;
         return '<tspan x="' + cx + '" dy="' + dy + '">' + esc(t) + "</tspan>";
       }).join("");
+    }
+    // nodeId가 GUIDE_NODE_STEP_MAP에 있으면 rect/diamond를 <g><title>로 감싸 커서를 대면 그 단계의
+    // 번호·제목·설명이 브라우저 기본 툴팁으로 뜨게 한다(다른 화면의 그래프 막대/점과 같은 방식).
+    function wrap(inner, nodeId) {
+      var tip = nodeId && GUIDE_NODE_STEP_MAP[nodeId] ? stepTooltip(steps, GUIDE_NODE_STEP_MAP[nodeId]) : "";
+      return tip ? '<g style="cursor:help"><title>' + esc(tip) + "</title>" + inner + "</g>" : inner;
     }
     var RECT_STYLE = {
       neutral: ["var(--surface)", "var(--border-strong)", "var(--ink)"],
@@ -1964,19 +1989,21 @@
       tech: ["var(--accent-soft)", "var(--accent)", "var(--accent-strong)"],
       designer: ["var(--warn-soft)", "var(--warn)", "var(--warn)"],
     };
-    function rect(cx, cy, w, h, lines, kind) {
+    function rect(cx, cy, w, h, lines, kind, nodeId) {
       var c = RECT_STYLE[kind];
-      return (
+      return wrap(
         '<rect x="' + (cx - w / 2) + '" y="' + (cy - h / 2) + '" width="' + w + '" height="' + h + '" rx="10" fill="' + c[0] + '" stroke="' + c[1] + '" stroke-width="1.5"/>' +
-        '<text x="' + cx + '" y="' + cy + '" text-anchor="middle" font-size="12.5" font-weight="600" fill="' + c[2] + '">' + lineTspans(cx, lines, 15) + "</text>"
+        '<text x="' + cx + '" y="' + cy + '" text-anchor="middle" font-size="12.5" font-weight="600" fill="' + c[2] + '">' + lineTspans(cx, lines, 15) + "</text>",
+        nodeId
       );
     }
-    function diamond(cx, cy, hw, hh, lines, kind) {
+    function diamond(cx, cy, hw, hh, lines, kind, nodeId) {
       var c = DIAMOND_STYLE[kind];
       var pts = [cx + "," + (cy - hh), (cx + hw) + "," + cy, cx + "," + (cy + hh), (cx - hw) + "," + cy].join(" ");
-      return (
+      return wrap(
         '<polygon points="' + pts + '" fill="' + c[0] + '" stroke="' + c[1] + '" stroke-width="1.5"/>' +
-        '<text x="' + cx + '" y="' + cy + '" text-anchor="middle" font-size="12" font-weight="600" fill="' + c[2] + '">' + lineTspans(cx, lines, 15) + "</text>"
+        '<text x="' + cx + '" y="' + cy + '" text-anchor="middle" font-size="12" font-weight="600" fill="' + c[2] + '">' + lineTspans(cx, lines, 15) + "</text>",
+        nodeId
       );
     }
     function arrow(points, opts) {
@@ -2006,15 +2033,15 @@
       "</defs>"
     );
     // 시작 — 두 갈래 진입점 (자동 감지 / 설계사 등록)
-    p.push(rect(300, 60, 220, 64, nodeLabels.A1, "neutral"));
-    p.push(rect(760, 60, 240, 64, nodeLabels.M1, "neutral"));
+    p.push(rect(300, 60, 220, 64, nodeLabels.A1, "neutral", "A1"));
+    p.push(rect(760, 60, 240, 64, nodeLabels.M1, "neutral", "M1"));
     p.push(arrow("300,92 300,130"));
     // AUTO 확인 분기 — "예"는 즉시 종결(③), "아니오"는 기술팀이 곧장 값 제안(④)으로 합류
-    p.push(diamond(300, 210, 125, 80, nodeLabels.D1, "tech"));
+    p.push(diamond(300, 210, 125, 80, nodeLabels.D1, "tech", "D1"));
     p.push(label(163, 190, ["예"], { color: "var(--ok)", w: 26 }));
     // TE1은 D1 바로 아래가 아니라 MG1과 같은 행에 놓인다 — 합류 지점(y=318)을 D1 바닥 꼭짓점(290)에서
     // 28px, MG1 윗변(346)에서도 28px 떼어 두 도형 모두와 라벨이 겹치지 않을 여유를 확보했다.
-    p.push(rect(150, 380, 230, 68, nodeLabels.TE1, "done"));
+    p.push(rect(150, 380, 230, 68, nodeLabels.TE1, "done", "TE1"));
     // TE1 박스를 먼저 그린 뒤 화살표를 그려야 화살촉이 박스 위에 온전히 보인다(z-order) — 이전에는
     // TE1이 그려지기 전 자리에 짧게 끊긴 화살표(150,316까지)를 먼저 그려 두어, 아래 화살표와 화살촉이
     // 겹쳐 보이는 이중 화살표 버그가 있었다(제거함).
@@ -2024,13 +2051,13 @@
     // MANUAL 질의는 별도 답변 단계 없이 곧장 기술팀 처리(④)로 내려간다 (같은 y=318에서 합류)
     p.push(arrow("760,92 760,318 660,318 660,346"));
     // ④ 기술팀 처리 — AS-IS 유지 확인 또는 값 제안, 둘 다 이 한 박스의 결과로 "값 제안됨"까지 간다
-    p.push(rect(560, 380, 340, 68, nodeLabels.MG1, "neutral"));
+    p.push(rect(560, 380, 340, 68, nodeLabels.MG1, "neutral", "MG1"));
     p.push(arrow("560,414 560,478"));
     // 값 제안됨
     p.push(rect(560, 510, 260, 64, nodeLabels.N_PROPOSED, "neutral"));
     p.push(arrow("560,542 560,560"));
     // 설계사 최종확인 분기 (재질의 루프 — 반려되면 ④로 돌아가 기술팀이 다시 처리)
-    p.push(diamond(560, 650, 150, 90, nodeLabels.D_FINAL, "designer"));
+    p.push(diamond(560, 650, 150, 90, nodeLabels.D_FINAL, "designer", "D_FINAL"));
     // TE1·MG1은 같은 행(y 346~414)에 나란히 있어 그 높이로 곧장 가로지르면 TE1 내부를 통과하게 된다 —
     // TE1 아래쪽(y=430, TE1 하단 414보다 16px 아래)까지 내려갔다가 오른쪽으로 이동해 TE1을 피해간다.
     // 마지막 구간은 MG1 왼쪽 변(수직)이 아니라 아랫변(수평 경계)에 수직으로 곧장 올라가 진입시킨다 —
@@ -2043,9 +2070,9 @@
     p.push(arrow("560,740 560,770", { color: "var(--ok)", marker: "flowArrowOk" }));
     p.push(label(600, 755, ["예"], { color: "var(--ok)", w: 26 }));
     // 최종 종결
-    p.push(rect(560, 810, 340, 80, nodeLabels.TFINAL, "done"));
+    p.push(rect(560, 810, 340, 80, nodeLabels.TFINAL, "done", "TFINAL"));
     return (
-      '<svg viewBox="0 0 1000 900" role="img" aria-label="제원 질의응답 처리 흐름: 자동/수동 질의가 담당 기술팀과 설계사 사이를 오가며 미답변에서 해결됨까지 거치는 최소 단계 경로와 재질의 루프를 보여준다">' +
+      '<svg viewBox="0 0 1000 900" role="img" aria-label="제원 질의응답 처리 흐름: 자동/수동 질의가 담당 기술팀과 설계사 사이를 오가며 미답변에서 해결됨까지 거치는 최소 단계 경로와 재질의 루프를 보여준다. 각 도형에 커서를 대면 해당 단계 설명이 뜬다">' +
       p.join("") +
       "</svg>"
     );
@@ -2053,31 +2080,37 @@
   // ---- 제원과 무관한(NON_SPEC) 질의 전용 흐름도 — 위 buildFlowSvg와 같은 배치 지침(겹침 방지 5가지)을
   // 그대로 따른다. 도형이 4개뿐이라 별도 viewBox로 간단히 그린다: 일반 질의 등록 → 기술팀 서술형 답변
   // → 설계사 최종검증 → (이상없음) 종결, (이상있음) 되돌이 화살표로 기술팀 답변 단계로 재질의. ----
-  function buildNonSpecFlowSvg(nodeLabels, edgeLabels) {
+  function buildNonSpecFlowSvg(nodeLabels, edgeLabels, steps) {
     function lineTspans(cx, lines, lineH) {
       return lines.map(function (t, i) {
         var dy = i === 0 ? (lines.length > 1 ? -((lines.length - 1) * lineH) / 2 : 0) : lineH;
         return '<tspan x="' + cx + '" dy="' + dy + '">' + esc(t) + "</tspan>";
       }).join("");
     }
+    function wrap(inner, nodeId) {
+      var tip = nodeId && GUIDE_NODE_STEP_MAP[nodeId] ? stepTooltip(steps, GUIDE_NODE_STEP_MAP[nodeId]) : "";
+      return tip ? '<g style="cursor:help"><title>' + esc(tip) + "</title>" + inner + "</g>" : inner;
+    }
     var RECT_STYLE = {
       neutral: ["var(--surface)", "var(--border-strong)", "var(--ink)"],
       done: ["var(--ok-soft)", "var(--ok)", "var(--ok)"],
     };
     var DIAMOND_STYLE = { designer: ["var(--warn-soft)", "var(--warn)", "var(--warn)"] };
-    function rect(cx, cy, w, h, lines, kind) {
+    function rect(cx, cy, w, h, lines, kind, nodeId) {
       var c = RECT_STYLE[kind];
-      return (
+      return wrap(
         '<rect x="' + (cx - w / 2) + '" y="' + (cy - h / 2) + '" width="' + w + '" height="' + h + '" rx="10" fill="' + c[0] + '" stroke="' + c[1] + '" stroke-width="1.5"/>' +
-        '<text x="' + cx + '" y="' + cy + '" text-anchor="middle" font-size="12.5" font-weight="600" fill="' + c[2] + '">' + lineTspans(cx, lines, 15) + "</text>"
+        '<text x="' + cx + '" y="' + cy + '" text-anchor="middle" font-size="12.5" font-weight="600" fill="' + c[2] + '">' + lineTspans(cx, lines, 15) + "</text>",
+        nodeId
       );
     }
-    function diamond(cx, cy, hw, hh, lines, kind) {
+    function diamond(cx, cy, hw, hh, lines, kind, nodeId) {
       var c = DIAMOND_STYLE[kind];
       var pts = [cx + "," + (cy - hh), (cx + hw) + "," + cy, cx + "," + (cy + hh), (cx - hw) + "," + cy].join(" ");
-      return (
+      return wrap(
         '<polygon points="' + pts + '" fill="' + c[0] + '" stroke="' + c[1] + '" stroke-width="1.5"/>' +
-        '<text x="' + cx + '" y="' + cy + '" text-anchor="middle" font-size="12" font-weight="600" fill="' + c[2] + '">' + lineTspans(cx, lines, 15) + "</text>"
+        '<text x="' + cx + '" y="' + cy + '" text-anchor="middle" font-size="12" font-weight="600" fill="' + c[2] + '">' + lineTspans(cx, lines, 15) + "</text>",
+        nodeId
       );
     }
     function arrow(points, opts) {
@@ -2104,21 +2137,21 @@
         '<marker id="nsFlowArrowWarn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--warn)"/></marker>' +
       "</defs>"
     );
-    p.push(rect(350, 50, 260, 60, nodeLabels.NS1, "neutral"));
+    p.push(rect(350, 50, 260, 60, nodeLabels.NS1, "neutral", "NS1"));
     p.push(arrow("350,80 350,150", { marker: "nsFlowArrow" }));
-    p.push(rect(350, 180, 260, 60, nodeLabels.NS2, "neutral"));
+    p.push(rect(350, 180, 260, 60, nodeLabels.NS2, "neutral", "NS2"));
     p.push(arrow("350,210 350,240", { marker: "nsFlowArrow" }));
-    p.push(diamond(350, 320, 140, 80, nodeLabels.NSD, "designer"));
+    p.push(diamond(350, 320, 140, 80, nodeLabels.NSD, "designer", "NSD"));
     // 이상 없음 → 종결 (D 하단 꼭짓점 y=400 에서 34px 떼어 진입)
     p.push(arrow("350,400 350,430", { color: "var(--ok)", marker: "nsFlowArrowOk" }));
     p.push(label(395, 415, ["예"], { color: "var(--ok)", w: 26 }));
-    p.push(rect(350, 460, 260, 60, nodeLabels.NSOK, "done"));
+    p.push(rect(350, 460, 260, 60, nodeLabels.NSOK, "done", "NSOK"));
     // 재질의 되돌이: D 좌측 꼭짓점(210,320)에서 왼쪽으로 크게 우회해 NS2 좌측 변(220,180)으로 재진입 —
     // x=60 세로선은 NS1·NS2·NSD(모두 x≥210) 어느 박스와도 겹치지 않는다.
     p.push(arrow("210,320 60,320 60,180 220,180", { color: "var(--warn)", dashed: true, marker: "nsFlowArrowWarn" }));
     p.push(label(145, 250, edgeLabels.nsRequery, { color: "var(--warn)", w: 100 }));
     return (
-      '<svg viewBox="0 0 700 520" role="img" aria-label="제원과 무관한 질의 처리 흐름: 일반 질의 등록부터 기술팀 서술형 답변, 설계사 최종검증, 재질의 루프를 보여준다">' +
+      '<svg viewBox="0 0 700 520" role="img" aria-label="제원과 무관한 질의 처리 흐름: 일반 질의 등록부터 기술팀 서술형 답변, 설계사 최종검증, 재질의 루프를 보여준다. 각 도형에 커서를 대면 해당 단계 설명이 뜬다">' +
       p.join("") +
       "</svg>"
     );
@@ -2127,12 +2160,16 @@
   // DB 자체가 처음 채워지는 단계를 그린다. 처음부터 100% 풀패키지 제원이 한 번에 오지 않고 부분접수될
   // 수 있다는 점을 반영해, 제원 DB 반영(접수④) 이후에도 남은 제원이 도착할 때마다 접수①로 되돌아가는
   // 점선 루프를 넣었다. buildFlowSvg 상단의 배치 지침(겹침 방지 5가지)을 그대로 따른다. ----
-  function buildIntakeFlowSvg(nodeLabels, edgeLabels) {
+  function buildIntakeFlowSvg(nodeLabels, edgeLabels, steps) {
     function lineTspans(cx, lines, lineH) {
       return lines.map(function (t, i) {
         var dy = i === 0 ? (lines.length > 1 ? -((lines.length - 1) * lineH) / 2 : 0) : lineH;
         return '<tspan x="' + cx + '" dy="' + dy + '">' + esc(t) + "</tspan>";
       }).join("");
+    }
+    function wrap(inner, nodeId) {
+      var tip = nodeId && GUIDE_NODE_STEP_MAP[nodeId] ? stepTooltip(steps, GUIDE_NODE_STEP_MAP[nodeId]) : "";
+      return tip ? '<g style="cursor:help"><title>' + esc(tip) + "</title>" + inner + "</g>" : inner;
     }
     var RECT_STYLE = {
       neutral: ["var(--surface)", "var(--border-strong)", "var(--ink)"],
@@ -2141,19 +2178,21 @@
     // "system"은 사람이 아니라 접수 형태 자체로 갈리는 분기라 기술팀(accent)/설계사(warn)와 다른
     // 중립색을 쓴다.
     var DIAMOND_STYLE = { system: ["var(--surface-2)", "var(--border-strong)", "var(--ink-muted)"] };
-    function rect(cx, cy, w, h, lines, kind) {
+    function rect(cx, cy, w, h, lines, kind, nodeId) {
       var c = RECT_STYLE[kind];
-      return (
+      return wrap(
         '<rect x="' + (cx - w / 2) + '" y="' + (cy - h / 2) + '" width="' + w + '" height="' + h + '" rx="10" fill="' + c[0] + '" stroke="' + c[1] + '" stroke-width="1.5"/>' +
-        '<text x="' + cx + '" y="' + cy + '" text-anchor="middle" font-size="12.5" font-weight="600" fill="' + c[2] + '">' + lineTspans(cx, lines, 15) + "</text>"
+        '<text x="' + cx + '" y="' + cy + '" text-anchor="middle" font-size="12.5" font-weight="600" fill="' + c[2] + '">' + lineTspans(cx, lines, 15) + "</text>",
+        nodeId
       );
     }
-    function diamond(cx, cy, hw, hh, lines, kind) {
+    function diamond(cx, cy, hw, hh, lines, kind, nodeId) {
       var c = DIAMOND_STYLE[kind];
       var pts = [cx + "," + (cy - hh), (cx + hw) + "," + cy, cx + "," + (cy + hh), (cx - hw) + "," + cy].join(" ");
-      return (
+      return wrap(
         '<polygon points="' + pts + '" fill="' + c[0] + '" stroke="' + c[1] + '" stroke-width="1.5"/>' +
-        '<text x="' + cx + '" y="' + cy + '" text-anchor="middle" font-size="12" font-weight="600" fill="' + c[2] + '">' + lineTspans(cx, lines, 15) + "</text>"
+        '<text x="' + cx + '" y="' + cy + '" text-anchor="middle" font-size="12" font-weight="600" fill="' + c[2] + '">' + lineTspans(cx, lines, 15) + "</text>",
+        nodeId
       );
     }
     function arrow(points, opts) {
@@ -2180,9 +2219,9 @@
       "</defs>"
     );
     // 접수① 제원 접수 → 협의된 양식? 분기
-    p.push(rect(380, 50, 280, 60, nodeLabels.IN1, "neutral"));
+    p.push(rect(380, 50, 280, 60, nodeLabels.IN1, "neutral", "IN1"));
     p.push(arrow("380,80 380,110"));
-    p.push(diamond(380, 195, 155, 85, nodeLabels.INQ, "system"));
+    p.push(diamond(380, 195, 155, 85, nodeLabels.INQ, "system", "INQ"));
     // 예(협의된 양식) → 접수② 제원표 업로드. 좌측 꼭짓점(225,195)에서 왼쪽으로 내려가 IN_UP 상단으로 진입 —
     // x=170 세로선은 마름모(x 225~535) 밖이라 겹치지 않는다.
     p.push(arrow("225,195 170,195 170,344"));
@@ -2190,17 +2229,17 @@
     // IN_UP은 "관리자만 업로드 가능" 줄이 추가되어 3줄이라, 2줄이던 다른 접수 박스보다 높이를 8px 더
     // 준다(h=72, IN_MANUAL과 동일) — 위/아래로 각 4px씩 넓어지므로 진입/이탈 화살표의 y좌표(344/416)도
     // 함께 맞춘다.
-    p.push(rect(170, 380, 240, 72, nodeLabels.IN_UP, "neutral"));
+    p.push(rect(170, 380, 240, 72, nodeLabels.IN_UP, "neutral", "IN_UP"));
     // 아니오(협의된 양식이 아님) → 접수③ 제원 수기입력. 우측 꼭짓점(535,195)에서 오른쪽으로 내려가 진입 —
     // x=600 세로선도 마름모 밖이다.
     p.push(arrow("535,195 600,195 600,344"));
     p.push(label(565, 178, ["아니오"], { w: 40 }));
-    p.push(rect(600, 380, 260, 72, nodeLabels.IN_MANUAL, "neutral"));
+    p.push(rect(600, 380, 260, 72, nodeLabels.IN_MANUAL, "neutral", "IN_MANUAL"));
     // 접수③(제원 수기입력)만 건설팀 담당자 승인을 거친다 — 협의된 엑셀 양식으로 들어온 접수②는
     // 자동 파싱이라 승인 없이 곧장 접수④로 간다. IN_MANUAL 바로 아래에 승인 분기 다이아몬드를 두고,
     // 반려(아니오)되면 IN_MANUAL로 되돌아가 기술팀이 다시 제출하는 점선 루프를 추가했다.
     p.push(arrow("600,416 600,455"));
-    p.push(diamond(600, 530, 150, 75, nodeLabels.IN_APPR, "system"));
+    p.push(diamond(600, 530, 150, 75, nodeLabels.IN_APPR, "system", "IN_APPR"));
     // 반려(아니오): 다이아몬드 우측 꼭짓점(750,530)에서 오른쪽으로 크게 우회(x=800, IN_MANUAL 우측
     // 변 730보다 바깥)해 올라간 뒤 IN_MANUAL 우측 변(730,380)으로 재진입한다 — 마지막 구간이 수평이고
     // IN_MANUAL의 "수직" 우측 변에 수직으로 닿으므로(perpendicular) 화살촉이 박스 바깥에 온전히
@@ -2233,7 +2272,7 @@
     // 아래로 50px 떨어져 있으면서도 viewBox 하단(780) 안에 온전히 들어온다.
     p.push(label(740, 715, edgeLabels.inPartial, { color: "var(--warn)", w: 140 }));
     return (
-      '<svg viewBox="0 0 1000 780" role="img" aria-label="제원 접수 흐름: 협의된 양식이면 제원표 업로드로 자동 파싱·누적하고, 아니면 제원 수기입력으로 기술팀이 직접 입력한 뒤 건설팀 담당자 승인을 거쳐, 부분접수 시 남은 제원이 도착할 때마다 반복해 제원 DB에 누적됨을 보여준다">' +
+      '<svg viewBox="0 0 1000 780" role="img" aria-label="제원 접수 흐름: 협의된 양식이면 제원표 업로드로 자동 파싱·누적하고, 아니면 제원 수기입력으로 기술팀이 직접 입력한 뒤 건설팀 담당자 승인을 거쳐, 부분접수 시 남은 제원이 도착할 때마다 반복해 제원 DB에 누적됨을 보여준다. 각 도형에 커서를 대면 해당 단계 설명이 뜬다">' +
       p.join("") +
       "</svg>"
     );
@@ -2318,8 +2357,8 @@
           '<p class="lead" style="margin-top:4px">제원표가 한 번에 전부 오지 않고 여러 차례에 걸쳐 조금씩(부분접수) 들어올 수 있다는 전제로, ' +
             "제원 DB 자체가 채워지는 단계를 보여줍니다. 협의된 양식이면 자동 누적(접수②), 아니면 기술팀 수기입력(접수③)으로 갈리고, " +
             "두 경로 모두 제원 DB 반영(접수④)으로 합류합니다 — 남은 제원이 나중에 도착하면 점선 화살표처럼 다시 접수①부터 반복해 계속 누적됩니다.</p>" +
-          '<figure style="margin:10px 0 0"><div class="flow-wrap">' + buildIntakeFlowSvg(nodeLabels, edgeLabels) + "</div>" +
-            '<figcaption class="flow-caption">회색 마름모는 사람이 아니라 접수 형태(협의된 양식 여부)로 갈리는 분기, 초록 상자(접수④)는 제원 DB에 실제로 반영되는 지점입니다. 점선(주황) 화살표는 부분접수 시 남은 제원이 도착할 때마다 반복되는 누적 루프를 뜻합니다.</figcaption>' +
+          '<figure style="margin:10px 0 0"><div class="flow-wrap">' + buildIntakeFlowSvg(nodeLabels, edgeLabels, steps) + "</div>" +
+            '<figcaption class="flow-caption">회색 마름모는 사람이 아니라 접수 형태(협의된 양식 여부)로 갈리는 분기, 초록 상자(접수④)는 제원 DB에 실제로 반영되는 지점입니다. 점선(주황) 화살표는 부분접수 시 남은 제원이 도착할 때마다 반복되는 누적 루프를 뜻합니다. 도형에 커서를 대면 그 단계의 자세한 설명이 뜹니다.</figcaption>' +
           "</figure>" +
         "</div>" +
         '<div class="panel">' +
@@ -2341,8 +2380,8 @@
           "<h2>질의 처리 흐름 — 제원 관련(SPEC) 질의</h2>" +
           '<p class="lead" style="margin-top:4px">제원 DB 값을 바꾸거나(바꿀 수 있거나) 바꿀지 판단하는 질의가 등록부터 최종 DB 반영까지 거치는 흐름입니다. ' +
             "AUTO 질의는 시스템이 스스로 생성하고, MANUAL 질의는 설계사가 직접 등록합니다 — 어느 쪽이든 기술팀 한 번의 판단(④)과 설계사 한 번의 최종확인이면 종결됩니다.</p>" +
-          '<figure style="margin:10px 0 0"><div class="flow-wrap">' + buildFlowSvg(nodeLabels, edgeLabels) + "</div>" +
-            '<figcaption class="flow-caption">① AUTO 질의부터 ⑥ 최종 DB 반영까지 — 실선 화살표는 다음 단계로 진행, 점선(주황) 화살표는 설계사 반려로 인한 재질의 되돌아가기를 뜻합니다.</figcaption>' +
+          '<figure style="margin:10px 0 0"><div class="flow-wrap">' + buildFlowSvg(nodeLabels, edgeLabels, steps) + "</div>" +
+            '<figcaption class="flow-caption">① AUTO 질의부터 ⑥ 최종 DB 반영까지 — 실선 화살표는 다음 단계로 진행, 점선(주황) 화살표는 설계사 반려로 인한 재질의 되돌아가기를 뜻합니다. 도형에 커서를 대면 그 단계의 자세한 설명이 뜹니다.</figcaption>' +
           "</figure>" +
           '<div class="flow-legend">' +
             '<div class="item"><span class="sw" style="background:var(--accent)"></span>기술팀이 처리</div>' +
@@ -2359,8 +2398,8 @@
           "<h2>질의 처리 흐름 — 제원과 무관한(NON_SPEC) 질의</h2>" +
           '<p class="lead" style="margin-top:4px">제원 DB 값을 바꾸는 것과 무관한 일반 문의는 위 SPEC 흐름과 완전히 별도로, ' +
             "기술팀의 서술형 답변 1회와 설계사의 최종검증 1회만으로 끝납니다 — 값 제안이나 AS-IS 유지 확인 같은 절차는 없습니다.</p>" +
-          '<figure style="margin:10px 0 0"><div class="flow-wrap">' + buildNonSpecFlowSvg(nodeLabels, edgeLabels) + "</div>" +
-            '<figcaption class="flow-caption">Ⓝ① 일반 질의 등록부터 Ⓝ③ 최종 종결까지 — 점선(주황) 화살표는 설계사 최종검증에서 이상이 발견되어 기술팀이 다시 서술형으로 답변하는 재질의 되돌아가기를 뜻합니다.</figcaption>' +
+          '<figure style="margin:10px 0 0"><div class="flow-wrap">' + buildNonSpecFlowSvg(nodeLabels, edgeLabels, steps) + "</div>" +
+            '<figcaption class="flow-caption">Ⓝ① 일반 질의 등록부터 Ⓝ③ 최종 종결까지 — 점선(주황) 화살표는 설계사 최종검증에서 이상이 발견되어 기술팀이 다시 서술형으로 답변하는 재질의 되돌아가기를 뜻합니다. 도형에 커서를 대면 그 단계의 자세한 설명이 뜹니다.</figcaption>' +
           "</figure>" +
         "</div>"
       );
