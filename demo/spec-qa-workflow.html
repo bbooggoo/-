@@ -709,6 +709,44 @@
     }
     SEED_SHEETS = SEED_SHEETS.concat(extraSheets);
 
+    // ---- P4 ph1~ph4 "엑셀 업로드" 더미 데이터 — SUMMARY 탭의 "대분류(UT)별 PJT 추이"를 실제로 확인해
+    // 볼 수 있도록, "제원표 업로드" 탭을 통해 실제로 올라온 것처럼 보이는 제원표를 P4의 네 단계(phase)에
+    // 걸쳐 만든다. versionSource를 "UPLOAD"로, uploadedBy/uploadedAt/applied를 실제 업로드 문서
+    // (handleUploadSubmit의 docPatch)와 같은 형태로 채워, "제원표 업로드" 탭 하단의 "업로드된 제원표
+    // 관리" 목록에도 그대로 나타나고 제원표 상세 "버전 이력" 탭에는 "엑셀 업로드(누적)"로 표시된다.
+    // phase가 넘어갈수록 항목 수를 늘려(genItemsScaled) 총량이 점점 증가하는 추이를 만든다 — 실제
+    // 건설이 진행되며 제원이 늘어나는 모양과 같다.
+    function genItemsScaled(scaleFactor) {
+      var items = [];
+      GENERATORS.forEach(function (g) {
+        if (!chance(g.p)) return;
+        var maxAdj = Math.max(g.min, Math.round(g.max * scaleFactor));
+        var n = randInt(g.min, maxAdj);
+        for (var i = 0; i < n; i++) items.push(g.gen());
+      });
+      return items.length ? items : [genGasItem()];
+    }
+    var P4_UPLOAD_DATES = { 1: "2026-03-10T09:20:00.000Z", 2: "2026-05-14T10:05:00.000Z", 3: "2026-07-09T08:40:00.000Z", 4: "2026-09-02T11:15:00.000Z" };
+    var P4_SHEETS_PER_PHASE = 6;
+    var p4UploadSheets = [];
+    for (var ph = 1; ph <= 4; ph++) {
+      var pjtName = "P4 ph" + ph;
+      var scale = 0.7 + ph * 0.3; // ph1≈1.0 → ph4≈1.9, 뒤로 갈수록 항목 수가 늘어 총량 증가 추이를 만든다
+      for (var k = 1; k <= P4_SHEETS_PER_PHASE; k++) {
+        var pDept = MAJOR_PROCESSES[(ph * P4_SHEETS_PER_PHASE + k) % MAJOR_PROCESSES.length];
+        var pLetter = pick(BUILDING_LETTERS);
+        var pFloor = randInt(1, 6);
+        p4UploadSheets.push({
+          code: "PD4" + ph + String(k).padStart(2, "0"),
+          dept: pDept, title: pDept + " 장비 " + pLetter + "동 제원표",
+          location: "평택 · " + pjtName + " · " + pFloor + "F", pjt: pjtName,
+          items: genItemsScaled(scale),
+          versionSource: "UPLOAD", uploadedBy: "관리자", uploadedAt: P4_UPLOAD_DATES[ph], applied: true,
+        });
+      }
+    }
+    SEED_SHEETS = SEED_SHEETS.concat(p4UploadSheets);
+
     var extraOwners = [];
     MAJOR_PROCESSES.forEach(function (mp) {
       if (mp === "CVD" || mp === "ETCH") return; // 기존 시드에 이미 존재
@@ -1564,9 +1602,12 @@
     return store.setSheet(code, newDoc);
   }
   function seedIfEmpty() {
+    // 시드 제원표는 기본적으로 "SEED"(시드 데이터)로 표시되지만, 일부는 실제로 "제원표 업로드" 탭을
+    // 거쳐 들어온 것처럼 보여야 하는 더미 데이터(예: P4 ph1~ph4)라 그 자신의 versionSource(예:
+    // "UPLOAD")를 그대로 존중한다 — 지정이 없으면 기존과 동일하게 "SEED"로 저장된다.
     if (!store.isLive) {
       SEED_OWNERS.forEach(function (o) { store.addOwner(o); });
-      SEED_SHEETS.forEach(function (s) { saveSheetVersion(s.code, s, "SEED"); });
+      SEED_SHEETS.forEach(function (s) { saveSheetVersion(s.code, s, s.versionSource || "SEED"); });
       return;
     }
     var lock = db.doc("system/seed_lock");
@@ -1576,7 +1617,7 @@
         var ownersEmpty = r[0], sheetsEmpty = r[1];
         var jobs = [];
         if (ownersEmpty) SEED_OWNERS.forEach(function (o) { jobs.push(store.addOwner(o)); });
-        if (sheetsEmpty) SEED_SHEETS.forEach(function (s) { jobs.push(saveSheetVersion(s.code, s, "SEED")); });
+        if (sheetsEmpty) SEED_SHEETS.forEach(function (s) { jobs.push(saveSheetVersion(s.code, s, s.versionSource || "SEED")); });
         return Promise.all(jobs);
       });
     }).catch(function () {});
