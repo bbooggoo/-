@@ -833,6 +833,8 @@
     selectedPjt: "",
     changeFormFor: null, // OPEN·답변승인 단계에서 "값 제안"을 눌러 제원 변경 폼을 펼친 thread id
     guideConfig: null, // 업무 가이드 탭의 관리자 편집 내용(guide_config/main 문서) — 없으면 기본 문구를 그대로 쓴다
+    guideSection: "intake", // 업무 가이드 탭 안의 소분류(하위 탭) — 한 화면에 흐름도 여러 개를 한꺼번에 보여주면
+    // 복잡해 보인다는 피드백에 따라, 주제별로 하나씩만 보이도록 나눴다. GUIDE_TABS 참고.
     guideEditing: false, // 관리자가 "편집" 모드를 켰는지
     guideDraft: null, // 편집 중인 초안(저장 전까지는 로컬에만 존재, 취소하면 버림)
     guideSaving: false,
@@ -1854,6 +1856,17 @@
     { id: "s8", num: "Ⓝ①→Ⓝ②", role: "기술팀", title: "제원과 무관한 질의 — 서술형 답변", desc: "값 제안/AS-IS 유지 같은 제원 DB 조작 없이, 질의 내용에 대해 서술형으로 답변만 등록합니다. 답변을 등록하면 곧장 \"답변완료(ANSWERED)\" 상태로 넘어가 설계사 최종검증만 남습니다." },
     { id: "s9", num: "Ⓝ②→Ⓝ③", role: "설계사", title: "최종검증", desc: "기술팀의 서술형 답변을 확인한 뒤, 답변에 이상이 없으면 \"이상 없음\"으로 그 자리에서 종결됩니다(제원 DB는 바뀌지 않습니다). 답변이 미흡하거나 추가 확인이 필요하면 \"재질의\"로 반려해 기술팀이 다시 서술형으로 답변하게 합니다." },
   ];
+  // ---- 업무 가이드 탭 안의 소분류(하위 탭) — 흐름도 3개(제원 접수/제원 관련 질의/제원 무관 질의)와
+  // 처리 현황·단계별 설명·화면 기능 안내를 한 화면에 전부 쌓아 보여주면 한눈에 복잡해 보인다는 피드백에
+  // 따라, 주제 하나당 탭 하나씩만 보이도록 나눴다. 관리자 전용 "편집" 탭은 renderGuidePage에서
+  // isAdmin일 때만 이 목록 뒤에 덧붙인다. ----
+  var GUIDE_TABS = [
+    { id: "intake", label: "제원 접수 흐름" },
+    { id: "spec", label: "질의 처리 흐름 (제원 관련)" },
+    { id: "nonspec", label: "질의 처리 흐름 (제원 무관)" },
+    { id: "progress", label: "처리 현황 · 단계별 설명" },
+    { id: "screens", label: "화면 기능 안내" },
+  ];
   function effectiveNodeLabels() {
     return Object.assign({}, DEFAULT_NODE_LABELS, (state.guideConfig || {}).nodeLabels || {});
   }
@@ -2294,31 +2307,12 @@
       state.guideSaving = false; state.guideSaveError = "저장 실패: " + (e && e.message ? e.message : e); render();
     });
   }
-  function renderGuidePage(main) {
-    var owner = currentOwner();
-    var isAdmin = owner && owner.role === "ADMIN";
-    var editing = !!(isAdmin && state.guideEditing && state.guideDraft);
-    var nodeLabels = editing ? state.guideDraft.nodeLabels : effectiveNodeLabels();
-    var edgeLabels = editing ? state.guideDraft.edgeLabels : effectiveEdgeLabels();
-    var steps = editing ? state.guideDraft.steps : effectiveGuideSteps();
-    var stats = computeGuideStats();
-    var cfg = state.guideConfig;
-    main.innerHTML =
-      '<div class="page">' +
-        "<h1 style=\"font-size:19px;margin-bottom:4px\">업무 가이드</h1>" +
-        '<p style="font-size:12.5px;color:var(--ink-muted);margin:0 0 6px">처음 이 화면을 쓰는 담당자를 위한 매뉴얼입니다. 제원은 처음부터 100% 풀패키지로 들어오지 않고 ' +
-          "<b>부분접수</b>될 수 있습니다 — 협의된 접수 양식(표준 엑셀)이면 \"제원표 업로드\" 탭에 반복해서 올려 자동으로 누적되고, " +
-          "그 양식이 아니면 \"제원 수기입력\" 탭에서 기술팀이 같은 항목 구성으로 직접 입력을 \"요청\"하고, 담당 대공정의 " +
-          "<b>건설팀 담당자</b>가 승인해야 실제로 제원 DB에 반영됩니다(첫 번째 흐름도, 접수③-A). " +
-          "이렇게 제원 DB에 값이 채워진 뒤부터는 질의는 등록 시점에 " +
-          "제원 DB(spec_sheets) 값을 바꾸거나(바꿀 수 있거나) 바꿀지 판단하는 내용인지를 기준으로 <b>제원 관련(SPEC)</b>과 " +
-          "<b>제원 무관(NON_SPEC)</b> 두 갈래로 나뉩니다 — AUTO 질의 생성과 설계사 수동 질의 등록 모두 마찬가지입니다. " +
-          "제원 관련 질의는 등록되고 나서 최종 DB 반영으로 종결되기까지 실제로 거치는 경로(자동/수동, 재질의 루프)를 두 번째 흐름도에, " +
-          "제원과 무관한 일반 질의는 서술형 답변과 최종검증만으로 끝나는 세 번째(더 짧은) 흐름도에 각각 담았습니다 — " +
-          "두 흐름 모두 설계사·기술팀이 확인해야 하는 왕복 횟수를 최소화했습니다(각각 기술팀 1회 처리 → 설계사 1회 최종확인/검증). " +
-          "\"질의응답\" 탭에서 보이는 상태 칩(미답변/값 제안됨/답변완료/해결됨) 문구와 그대로 대응됩니다." +
-          (isAdmin ? " 관리자는 흐름도 문구와 단계별 설명을 직접 고쳐 쓸 수 있습니다." : "") + "</p>" +
-        (cfg && cfg.updatedAt ? '<p style="font-size:11px;color:var(--ink-faint);margin:0 0 14px">마지막 수정: ' + esc(cfg.updatedBy || "") + " · " + fmtTime(cfg.updatedAt) + "</p>" : "") +
+  // ---- 소분류(탭) 하나의 내용만 돌려준다 — 예전에는 흐름도 3개 + 통계 + 단계별 설명 + 화면 안내를
+  // 전부 한 화면에 쌓아 보여줘서 복잡하다는 피드백을 받았다. 지금은 GUIDE_TABS 중 고른 것 하나만
+  // 보여주고, 관리자 편집은 "edit" 소분류로 완전히 분리했다(일반 사용자는 이 탭 자체를 볼 수 없다). ----
+  function renderGuideSection(section, nodeLabels, edgeLabels, steps, stats, editing, isAdmin) {
+    if (section === "intake") {
+      return (
         '<div class="panel">' +
           "<h2>제원 접수 흐름 — 부분접수 포함</h2>" +
           '<p class="lead" style="margin-top:4px">제원표가 한 번에 전부 오지 않고 여러 차례에 걸쳐 조금씩(부분접수) 들어올 수 있다는 전제로, ' +
@@ -2338,17 +2332,17 @@
             '<li><b>질의(질의응답)로는 자동 전환되지 않습니다</b> — 업로드는 전적으로 자동 반영 경로라, 값이 겹쳐도 최신값으로 조용히 갱신될 뿐입니다. 검증 규칙(성상별 유량 OVER, 성상명 표준화 등)을 위반하는 항목만 "질의응답" 메뉴의 "자동 질의 일괄 생성"으로 별도 질의가 만들어집니다.</li>' +
             '<li><b>잘못 업로드했다면</b> — "제원표 업로드" 탭 하단의 "업로드된 제원표 관리"에서 관리자가 해당 건설코드를 <b>미적용</b>으로 돌려 다른 모든 화면에서 즉시 제외한 뒤, 올바른 내용으로 같은 건설코드를 다시 업로드해 재접수하거나 <b>삭제</b>로 완전히 지우고 처음부터 다시 올릴 수 있습니다.</li>' +
           "</ul>" +
-        "</div>" +
+        "</div>"
+      );
+    }
+    if (section === "spec") {
+      return (
         '<div class="panel">' +
-          '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">' +
-            "<h2>전체 처리 흐름</h2>" +
-            (isAdmin ? (editing
-              ? '<div class="btn-row"><button class="btn primary small" id="guideSaveBtn"' + (state.guideSaving ? " disabled" : "") + ">" + (state.guideSaving ? "저장 중..." : "저장") + "</button><button class=\"btn small\" id=\"guideCancelBtn\">취소</button></div>"
-              : '<button class="btn small" id="guideEditBtn">✏️ 편집 (관리자)</button>') : "") +
-          "</div>" +
-          (state.guideSaveError ? '<p class="error-text">' + esc(state.guideSaveError) + "</p>" : "") +
+          "<h2>질의 처리 흐름 — 제원 관련(SPEC) 질의</h2>" +
+          '<p class="lead" style="margin-top:4px">제원 DB 값을 바꾸거나(바꿀 수 있거나) 바꿀지 판단하는 질의가 등록부터 최종 DB 반영까지 거치는 흐름입니다. ' +
+            "AUTO 질의는 시스템이 스스로 생성하고, MANUAL 질의는 설계사가 직접 등록합니다 — 어느 쪽이든 기술팀 한 번의 판단(④)과 설계사 한 번의 최종확인이면 종결됩니다.</p>" +
           '<figure style="margin:10px 0 0"><div class="flow-wrap">' + buildFlowSvg(nodeLabels, edgeLabels) + "</div>" +
-            '<figcaption class="flow-caption">① AUTO 질의부터 ⑥ 최종 DB 반영까지 — 실선 화살표는 다음 단계로 진행, 점선(주황) 화살표는 설계사 반려로 인한 재질의 되돌아가기를 뜻합니다. 어느 경로든 기술팀 한 번의 판단(④)과 설계사 한 번의 최종확인이면 종결됩니다.</figcaption>' +
+            '<figcaption class="flow-caption">① AUTO 질의부터 ⑥ 최종 DB 반영까지 — 실선 화살표는 다음 단계로 진행, 점선(주황) 화살표는 설계사 반려로 인한 재질의 되돌아가기를 뜻합니다.</figcaption>' +
           "</figure>" +
           '<div class="flow-legend">' +
             '<div class="item"><span class="sw" style="background:var(--accent)"></span>기술팀이 처리</div>' +
@@ -2356,29 +2350,37 @@
             '<div class="item"><span class="sw" style="background:var(--border-strong)"></span>진행 중 상태(대기)</div>' +
             '<div class="item"><span class="sw" style="background:var(--ok)"></span>종결(RESOLVED)</div>' +
           "</div>" +
-          (editing ? renderLabelEditGrid(state.guideDraft) : "") +
-        "</div>" +
+        "</div>"
+      );
+    }
+    if (section === "nonspec") {
+      return (
         '<div class="panel">' +
-          "<h2>제원과 무관한 질의(NON_SPEC) 처리 흐름</h2>" +
-          '<p class="lead" style="margin-top:4px">제원 DB 값을 바꾸는 것과 무관한 일반 문의는 위 흐름과 완전히 별도로, ' +
+          "<h2>질의 처리 흐름 — 제원과 무관한(NON_SPEC) 질의</h2>" +
+          '<p class="lead" style="margin-top:4px">제원 DB 값을 바꾸는 것과 무관한 일반 문의는 위 SPEC 흐름과 완전히 별도로, ' +
             "기술팀의 서술형 답변 1회와 설계사의 최종검증 1회만으로 끝납니다 — 값 제안이나 AS-IS 유지 확인 같은 절차는 없습니다.</p>" +
           '<figure style="margin:10px 0 0"><div class="flow-wrap">' + buildNonSpecFlowSvg(nodeLabels, edgeLabels) + "</div>" +
             '<figcaption class="flow-caption">Ⓝ① 일반 질의 등록부터 Ⓝ③ 최종 종결까지 — 점선(주황) 화살표는 설계사 최종검증에서 이상이 발견되어 기술팀이 다시 서술형으로 답변하는 재질의 되돌아가기를 뜻합니다.</figcaption>' +
           "</figure>" +
-        "</div>" +
+        "</div>"
+      );
+    }
+    if (section === "progress") {
+      return (
         '<div class="panel">' +
           "<h2>처리 현황 — 케이스별 횟수</h2>" +
           '<p class="lead" style="margin-top:4px">위 흐름도의 각 단계가 지금까지 실제로 몇 번 일어났는지 보여줍니다 — 질의 데이터가 바뀔 때마다 실시간으로 다시 계산되므로 항상 실제 처리 현황과 일치합니다.</p>' +
           '<div class="stat-cols">' + renderStatTable("🔧 기술팀", stats.tech) + renderStatTable("📐 설계사", stats.designer) + "</div>" +
         "</div>" +
         '<div class="panel">' +
-          '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">' +
-            "<h2>단계별 설명</h2>" +
-            (editing ? '<button class="btn small" id="guideAddStepBtn">+ 단계 추가</button>' : "") +
-          "</div>" +
-          '<p class="lead" style="margin-top:4px">번호는 위 흐름도 표기와 같습니다.' + (editing ? " 편집 중입니다 — \"저장\"을 눌러야 모두에게 반영됩니다." : "") + "</p>" +
-          (editing ? steps.map(function (s, i) { return renderStepEditRow(s, i, steps.length); }).join("") : steps.map(renderGuideStepReadonly).join("")) +
-        "</div>" +
+          "<h2>단계별 설명</h2>" +
+          '<p class="lead" style="margin-top:4px">번호는 각 흐름도의 표기와 같습니다 — 접수①~④는 "제원 접수 흐름" 탭, ①~⑥은 "질의 처리 흐름(제원 관련)" 탭, Ⓝ①~Ⓝ③은 "질의 처리 흐름(제원 무관)" 탭의 흐름도를 가리킵니다.</p>' +
+          steps.map(renderGuideStepReadonly).join("") +
+        "</div>"
+      );
+    }
+    if (section === "screens") {
+      return (
         '<div class="panel">' +
           "<h2>화면 기능 한눈에 보기</h2>" +
           '<ul style="margin:8px 0 0;padding-left:18px;font-size:12.5px;color:var(--ink-muted);line-height:1.7">' +
@@ -2389,9 +2391,64 @@
             "<li>상단 <b>PJT 선택</b>으로 사업장·단계를 좁히면 대시보드·SUMMARY·제원 DB·질의응답이 전부 그 PJT 데이터만 보여줍니다.</li>" +
             "<li>같은 건설코드를 <b>\"제원표 업로드\"</b> 탭에 다시 올리면(부분접수) 기존 항목은 지워지지 않고 그대로 <b>누적</b>됩니다. 협의된 엑셀 양식이 아닌 제원은 <b>\"제원 수기입력\"</b> 탭에서 기술팀 담당자가 같은 항목 구성으로 직접 추가·수정·삭제를 <b>요청</b>하고, 담당 대공정의 <b>건설팀 담당자</b>(또는 관리자)가 승인해야 제원 DB에 반영됩니다.</li>" +
           "</ul>" +
+        "</div>"
+      );
+    }
+    // section === "edit" (관리자 전용) — 흐름도 3개가 공유하는 박스/화살표 문구와 단계별 설명을 한
+    // 자리에서 고친다. 저장하지 않아도 위 네 탭(intake/spec/nonspec/progress)에는 편집 중인 내용이
+    // 그 자리에서 미리보기로 반영되므로, 다른 탭을 오가며 결과를 확인한 뒤 여기로 돌아와 저장하면 된다.
+    return (
+      '<div class="panel">' +
+        '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">' +
+          "<h2>흐름도 문구 편집</h2>" +
+          (editing
+            ? '<div class="btn-row"><button class="btn primary small" id="guideSaveBtn"' + (state.guideSaving ? " disabled" : "") + ">" + (state.guideSaving ? "저장 중..." : "저장") + "</button><button class=\"btn small\" id=\"guideCancelBtn\">취소</button></div>"
+            : '<button class="btn small" id="guideEditBtn">편집 시작</button>') +
         "</div>" +
+        '<p class="lead" style="margin-top:4px">여기서 고친 문구는 저장하면 "제원 접수 흐름" · "질의 처리 흐름(제원 관련)" · "질의 처리 흐름(제원 무관)" 세 흐름도에 모두 반영됩니다. ' +
+          "편집 중에는 다른 탭으로 이동해도 지금 고친 내용이 그대로 미리보기로 보입니다.</p>" +
+        (state.guideSaveError ? '<p class="error-text">' + esc(state.guideSaveError) + "</p>" : "") +
+        (editing ? renderLabelEditGrid(state.guideDraft) : '<div class="empty-state">편집을 시작하려면 위 "편집 시작" 버튼을 누르세요.</div>') +
+      "</div>" +
+      (editing ?
+        '<div class="panel">' +
+          '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">' +
+            "<h2>단계별 설명 편집</h2>" +
+            '<button class="btn small" id="guideAddStepBtn">+ 단계 추가</button>' +
+          "</div>" +
+          '<p class="lead" style="margin-top:4px">\"저장\"을 눌러야 모두에게 반영됩니다. 번호는 각 흐름도의 표기(접수①~④/①~⑥/Ⓝ①~Ⓝ③)와 맞춰 적어 주세요.</p>' +
+          steps.map(function (s, i) { return renderStepEditRow(s, i, steps.length); }).join("") +
+        "</div>" : "")
+    );
+  }
+  function renderGuidePage(main) {
+    var owner = currentOwner();
+    var isAdmin = owner && owner.role === "ADMIN";
+    var editing = !!(isAdmin && state.guideEditing && state.guideDraft);
+    var nodeLabels = editing ? state.guideDraft.nodeLabels : effectiveNodeLabels();
+    var edgeLabels = editing ? state.guideDraft.edgeLabels : effectiveEdgeLabels();
+    var steps = editing ? state.guideDraft.steps : effectiveGuideSteps();
+    var stats = computeGuideStats();
+    var cfg = state.guideConfig;
+    var tabs = GUIDE_TABS.concat(isAdmin ? [{ id: "edit", label: "✏️ 편집 (관리자)" }] : []);
+    var section = tabs.some(function (t) { return t.id === state.guideSection; }) ? state.guideSection : "intake";
+    main.innerHTML =
+      '<div class="page">' +
+        "<h1 style=\"font-size:19px;margin-bottom:4px\">업무 가이드</h1>" +
+        '<p style="font-size:12.5px;color:var(--ink-muted);margin:0 0 6px">처음 이 화면을 쓰는 담당자를 위한 매뉴얼입니다. 제원은 한 번에 전부 들어오지 않고 여러 차례에 걸쳐(부분접수) 채워지고, ' +
+          "채워진 뒤의 질의는 제원 DB 값을 바꾸는 내용인지에 따라 <b>제원 관련(SPEC)</b> · <b>제원 무관(NON_SPEC)</b> 두 갈래로 처리됩니다. " +
+          "아래 탭에서 흐름도와 설명을 하나씩 확인하세요." +
+          (isAdmin ? " 관리자는 맨 오른쪽 \"✏️ 편집\" 탭에서 흐름도 문구와 단계별 설명을 직접 고쳐 쓸 수 있습니다." : "") + "</p>" +
+        (cfg && cfg.updatedAt ? '<p style="font-size:11px;color:var(--ink-faint);margin:0 0 14px">마지막 수정: ' + esc(cfg.updatedBy || "") + " · " + fmtTime(cfg.updatedAt) + "</p>" : "") +
+        '<div class="tabs" style="margin-bottom:16px">' + tabs.map(function (t) {
+          return '<button class="tab' + (section === t.id ? " active" : "") + '" data-guide-section="' + t.id + '">' + t.label + "</button>";
+        }).join("") + "</div>" +
+        renderGuideSection(section, nodeLabels, edgeLabels, steps, stats, editing, isAdmin) +
       "</div>";
 
+    Array.prototype.forEach.call(main.querySelectorAll("[data-guide-section]"), function (b) {
+      b.onclick = function () { state.guideSection = b.dataset.guideSection; render(); };
+    });
     if (isAdmin) {
       var editBtn = document.getElementById("guideEditBtn");
       if (editBtn) editBtn.onclick = function () { startGuideEdit(); render(); };
