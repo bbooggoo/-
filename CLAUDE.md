@@ -48,6 +48,15 @@ commit·push까지 마친다.
   상세 목록에만 쓴다.
 - PPT 파일을 새로 만들거나 갱신했다면, 그 파일의 GitHub 링크를 답변 마지막에
   포함한다(아래 "답변 형식" 참고).
+- **`demo/spec-qa-workflow.html`(아티팩트) 자체에 이 PPT를 내려받는 버튼이
+  내장되어 있다** — 아티팩트가 정적 페이지라 GitHub를 실시간으로 읽어올 수
+  없으므로, PPT 파일 내용을 base64로 통째로 인코딩해 페이지 안에 넣어 두고
+  다운로드 시 그 자리에서 디코딩해 저장한다(`DEV_BRIEFING_PPTX_BASE64`
+  상수). **PPT 파일을 새로 만들거나 고치면 이 상수도 최신 PPT 내용으로 반드시
+  함께 갱신**하고(그렇지 않으면 버튼이 예전 버전을 내려받는다), "Artifact ↔
+  git 동기화" 절의 순서(게시 전 라이브 버전 전체 읽기 → 게시 → git 동기화)를
+  그대로 따른다. base64 재생성은 다음과 같이 한다:
+  `python3 -c "import base64; print(base64.b64encode(open('demo/spec-qa-workflow-dev-briefing.pptx','rb').read()).decode())"`
 
 ## GCS 성상/자재 성질 분류 맵핑리스트 (항상 지킬 것 · 타 PJT/프로젝트 공용 누적 지침)
 
