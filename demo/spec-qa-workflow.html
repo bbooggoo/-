@@ -447,6 +447,32 @@
   }
 
   // ===================================================================
+  // 설비 식별 정보(PRC/MODEL/MAKER) — 건설코드(=설비 한 대) 단위로 갖는 상위 식별값이다. 제원표
+  // 업로드 파서가 이미 이 세 헤더를 공통값(COMMON_FIELD_NAMES)으로 인식은 하고 있었지만 지금까지
+  // 실제로 제원표 문서에 저장하지는 않았다 — 이 세 값을 건설코드(제원표) 단위로 저장하고, 대공정+
+  // PRC+MODEL+MAKER+설비모듈을 "같은 유형의 설비"를 가리는 기준으로 삼는다(아래 "질의 유형" 절의
+  // equipPatternKey 참고). 항목(item) 단위가 아니라 제원표(sheet) 단위 필드이므로 건당 저장 비용이
+  // 매우 작다 — 항목 수가 많아도 문서 크기가 거의 늘지 않는다.
+  // ===================================================================
+  var EQUIP_MAKERS = ["AMAT", "TEL", "LAM RESEARCH", "ASML", "KLA", "HITACHI KOKUSAI", "SCREEN", "CANON", "NAURA", "PSK", "WONIK IPS", "JUSUNG", "SEMES", "MKS"];
+  function strHash(s) {
+    var h = 0;
+    s = String(s || "");
+    for (var i = 0; i < s.length; i++) { h = (h * 31 + s.charCodeAt(i)) | 0; }
+    return Math.abs(h);
+  }
+  // 건설코드 문자열만으로 결정론적으로 PRC/MODEL/MAKER를 만든다 — 같은 건설코드는 언제 호출해도
+  // 항상 같은 값이 나온다(더미 생성 순서와 무관하고, 이미 저장된 실제 제원표에 뒤늦게 값을 채워
+  // 넣는 migrateEquipMeta()에서도 그대로 재사용할 수 있다).
+  function equipMetaFor(code) {
+    var h = strHash(code);
+    var maker = EQUIP_MAKERS[h % EQUIP_MAKERS.length];
+    var model = maker.replace(/[^A-Z]/g, "").slice(0, 3) + "-" + (100 + (Math.floor(h / EQUIP_MAKERS.length) % 900));
+    var prc = String(1000 + (Math.floor(h / 97) % 9000));
+    return { maker: maker, model: model, prc: prc };
+  }
+
+  // ===================================================================
   // GCS(SPECIALITY GAS·폐액·CHEMICAL) 성상/자재 성질 분류 맵핑리스트
   // 이 목록은 이 앱 하나만의 자산이 아니라 타 PJT/프로젝트에서도 그대로 재사용·누적 관리해야 하는
   // 사내 지침이다 — 이 상수를 고치면 같은 세션 안에서 CLAUDE.md의 "GCS 성상/자재 성질 분류
@@ -588,6 +614,7 @@
   var SEED_SHEETS = [
     {
       code: "PD000101", dept: "CVD", title: "CVD 장비 A동 제원표", location: "평택 · P5 ph1 · 3F", pjt: "P5 ph1",
+      prc: "8421", model: "PRO-XP", maker: "AMAT",
       items: [
         { category: "GAS/AIR", 성상명: "N2", 유량: 9, 배관수량: 2, 압력: 3.5, 배관재질: "SUS316L", 설비모듈: "SCRUBBER", 설비대수: 1 },
         { category: "GAS/AIR", 성상명: "O2", 유량: 8, 배관수량: 1, 압력: 3.0, 배관재질: "SUS316L", 설비모듈: "SCRUBBER", 설비대수: 1 },
@@ -607,6 +634,7 @@
     },
     {
       code: "PD000102", dept: "ETCH", title: "ETCH 장비 B동 제원표", location: "평택 · P5 ph1 · 4F", pjt: "P5 ph1",
+      prc: "7215", model: "COR-2", maker: "LAM RESEARCH",
       items: [
         { category: "GAS/AIR", 성상명: "AR", 유량: 7, 배관수량: 3, 압력: 3.8, 배관재질: "SUS316L", 설비모듈: "SCRUBBER", 설비대수: 1 },
         { category: "GAS/AIR", 성상명: "H2", 유량: 5, 배관수량: 2, 압력: 3.0, 배관재질: "SUS316L", 설비모듈: "SCRUBBER", 설비대수: 2 },
@@ -708,16 +736,20 @@
     function genWasteWaterItem() {
       return { category: "WASTE WATER", 성상명: pick(WASTEWATER_SPECIES), 유량: randInt(5, 35), 배관수량: randInt(1, 3), 설비모듈: pick(EQUIP_MODULES), 설비대수: randEquipCount() };
     }
+    // 지침(항상 지킬 것): PRC/MODEL/MAKER 3개 열 추가 + 제원표당 항목이 늘어도 공유 저장소가 여유
+    // 있게 유지되도록(90% 수준 목표), 아래 범위/확률을 기존보다 낮춰 제원표 1건당 평균 항목(행) 수를
+    // 약 15~20% 줄였다 — 새 필드는 제원표(sheet) 단위라 문서 수·문서 크기에 미치는 영향은 미미하지만,
+    // 항목 행이 줄면 검증 이슈(자동 질의) 발생량도 함께 줄어 전체 저장소 사용량에 여유가 생긴다.
     var GENERATORS = [
-      { gen: genGasItem, min: 2, max: 5, p: 1.0 },
+      { gen: genGasItem, min: 2, max: 4, p: 1.0 },
       { gen: genPowerItem, min: 1, max: 2, p: 0.95 },
-      { gen: genExhaustItem, min: 1, max: 2, p: 0.7 },
-      { gen: genSpGasItem, min: 1, max: 3, p: 0.55 },
+      { gen: genExhaustItem, min: 1, max: 2, p: 0.6 },
+      { gen: genSpGasItem, min: 1, max: 2, p: 0.5 },
       { gen: genWaterItem, min: 1, max: 2, p: 0.8 },
-      { gen: genChemicalItem, min: 1, max: 2, p: 0.5 },
+      { gen: genChemicalItem, min: 1, max: 1, p: 0.4 },
       { gen: genUpwItem, min: 1, max: 1, p: 0.6 },
-      { gen: genWasteItem, min: 1, max: 1, p: 0.45 },
-      { gen: genWasteWaterItem, min: 1, max: 2, p: 0.65 },
+      { gen: genWasteItem, min: 1, max: 1, p: 0.35 },
+      { gen: genWasteWaterItem, min: 1, max: 2, p: 0.55 },
     ];
     function genItems() {
       var items = [];
@@ -736,9 +768,11 @@
       var dept = pick(MAJOR_PROCESSES);
       var letter = pick(BUILDING_LETTERS);
       var floor = randInt(1, 6);
+      var meta = equipMetaFor(code);
       extraSheets.push({
         code: code, dept: dept, title: dept + " 장비 " + letter + "동 제원표",
         location: "평택 · " + DEFAULT_PJT + " · " + floor + "F", pjt: DEFAULT_PJT, items: genItems(),
+        prc: meta.prc, model: meta.model, maker: meta.maker,
       });
     }
     SEED_SHEETS = SEED_SHEETS.concat(extraSheets);
@@ -763,11 +797,14 @@
         var pDept = pick(MAJOR_PROCESSES);
         var pLetter = pick(BUILDING_LETTERS);
         var pFloor = randInt(1, 6);
+        var p4Code = "PD4" + ph + String(k).padStart(4, "0");
+        var p4Meta = equipMetaFor(p4Code);
         p4UploadSheets.push({
-          code: "PD4" + ph + String(k).padStart(4, "0"),
+          code: p4Code,
           dept: pDept, title: pDept + " 장비 " + pLetter + "동 제원표",
           location: "평택 · " + pjtName + " · " + pFloor + "F", pjt: pjtName,
           items: genItems(),
+          prc: p4Meta.prc, model: p4Meta.model, maker: p4Meta.maker,
           versionSource: "UPLOAD", uploadedBy: "관리자",
           uploadedAt: new Date(baseTime + randInt(0, 27) * 86400000).toISOString(), applied: true,
         });
@@ -851,6 +888,8 @@
     threads: [],          // qa threads
     corrections: [],
     specEntryRequests: [], // "제원 수기입력" 승인 대기 요청 (기술팀 제출 → 건설팀 담당자 승인/반려)
+    queryPatterns: {},     // id -> 질의 유형(패턴) 문서 — equipPatternKey 참고
+    qpFilterMp: "", qpSearch: "", qpExpandedId: null,
     dashFilterMp: "", dashFilterStatus: "",
     summaryFilterMp: "", summaryAutoApplied: false, summaryTrendCategory: "", summaryTrendBreakdown: "",
     qFilterMp: "", qFilterDiscipline: "", qFilterType: "", qFilterNature: "", qTechAction: "", qDesignerAction: "", qSearch: "", qOpenOnly: true, qRequeryOnly: false, qAutoApplied: false,
@@ -893,7 +932,7 @@
     // 값"이 아니라 위쪽 필드) — 상태에 없으면 대분류를 고르는 순간 입력해 둔 값이 지워져 버린다. 그
     // 외의 항목 값 입력 필드(새 항목의 필드/설비모듈/설비대수 등)는 그 뒤로 다시 그려질 일이 없어
     // 다른 폼과 마찬가지로 추가 버튼을 누를 때 DOM에서 바로 읽는다.
-    specEntryForm: { dept: "", code: "", codeSearch: "", isNewCode: false, category: "", newCodeValue: "", newPjt: "", newTitle: "", newLocation: "" },
+    specEntryForm: { dept: "", code: "", codeSearch: "", isNewCode: false, category: "", newCodeValue: "", newPjt: "", newTitle: "", newLocation: "", newPrc: "", newModel: "", newMaker: "" },
   };
 
   var store = null;
@@ -1089,6 +1128,60 @@
     var cands = state.owners.filter(function (o) { return o.role === "CONSTRUCTION_LEAD" && (o.majorProcesses || []).indexOf(mp) !== -1; });
     return cands.length === 1 ? cands[0].name : null;
   }
+  // ===================================================================
+  // 질의 유형(패턴) DB — "대공정+PRC+MODEL+MAKER+설비모듈"을 같은 유형의 설비로 보고, 그 설비의 특정
+  // 필드에 대한 질의가 반복되는지 추적한다. 목적 두 가지:
+  //   1) 같은 유형의 질의가 다음 PJT에서도 또 들어오면, 과거 처리 이력에서 가장 많이 쓰인 값을
+  //      "제안값"으로 미리 보여준다(수동질의 등록 화면·제원 변경 화면의 힌트, patternFor 참고).
+  //   2) 수동 질의로 반복 처리된 유형이 PATTERN_AUTO_PROMOTE_THRESHOLD회 이상 쌓이면 그 유형은
+  //      "자동전환(autoPromoted)"으로 표시되고, 이후로는 새로 들어오는 같은 유형의 항목에 대해
+  //      시스템이 스스로 AUTO 질의를 만든다(아래 generatePatternAutoQueries 참고) — 매번 설계사가
+  //      수동으로 다시 질의를 올릴 필요가 없어진다.
+  // 문서는 "질의 유형" 탭(renderQueryPatternsPage)에서 조회·관리한다. 발생마다 새 문서를 쌓지 않고
+  // 패턴 키 하나당 문서 하나만 upsert하므로, 문서 수는 "질의 건수"가 아니라 "유형 가짓수"에만
+  // 비례한다 — 문서 5,000개 한도에 주는 부담이 매우 작다.
+  // ===================================================================
+  var PATTERN_AUTO_PROMOTE_THRESHOLD = 3; // 수동 질의로 이 값 이상 반복 처리되면 자동전환
+  var PATTERN_HISTORY_LIMIT = 15; // 패턴 문서 하나가 저장하는 최근 발생 이력 상한(문서 크기 억제)
+  function normKeyPart(v) { var s = String(v == null ? "" : v).trim(); return s === "" ? "(미지정)" : s; }
+  function equipPatternKey(majorProcess, prc, model, maker, equipModule, field) {
+    return [normKeyPart(majorProcess), normKeyPart(prc), normKeyPart(model), normKeyPart(maker), normKeyPart(equipModule), normKeyPart(field)].join("||");
+  }
+  function patternDocId(key) { return "pt_" + key.replace(/[^a-zA-Z0-9가-힣]+/g, "_").slice(0, 400); }
+  // 특정 대상(대공정+제원표+설비모듈+필드)에 매칭되는 질의 유형 문서를 찾는다.
+  function patternFor(majorProcess, sheet, equipModule, field) {
+    if (!sheet) return null;
+    var key = equipPatternKey(majorProcess, sheet.prc, sheet.model, sheet.maker, equipModule, field);
+    return state.queryPatterns[patternDocId(key)] || null;
+  }
+  // 질의 하나가 종결(RESOLVED)되어 실제로 값이 반영될 때마다 호출 — 대상별로 "이 유형에 이 값이
+  // 쓰였다"를 패턴 문서에 누적한다.
+  function recordPatternOccurrence(majorProcess, sheetCode, itemIdx, field, value, sourceType, threadId) {
+    var sheet = state.sheets[sheetCode];
+    if (!sheet) return Promise.resolve();
+    var equip = ((sheet.items || [])[itemIdx] || {}).설비모듈 || "";
+    var key = equipPatternKey(majorProcess, sheet.prc, sheet.model, sheet.maker, equip, field);
+    var id = patternDocId(key);
+    var existing = state.queryPatterns[id];
+    var occ = { value: String(value), at: nowIso(), source: sourceType, threadId: threadId || null, sheetCode: sheetCode, pjt: sheet.pjt || "" };
+    var history = existing ? (existing.history || []).concat([occ]) : [occ];
+    if (history.length > PATTERN_HISTORY_LIMIT) history = history.slice(history.length - PATTERN_HISTORY_LIMIT);
+    var count = (existing ? (existing.count || 0) : 0) + 1;
+    // 제안값 = 이력 중 최빈값(동률이면 가장 최근 값이 이기도록 >= 비교)
+    var freq = {}, suggestedValue = occ.value, bestCount = 0;
+    history.forEach(function (h) { freq[h.value] = (freq[h.value] || 0) + 1; });
+    Object.keys(freq).forEach(function (v) { if (freq[v] >= bestCount) { bestCount = freq[v]; suggestedValue = v; } });
+    var manualCount = history.filter(function (h) { return h.source === "MANUAL"; }).length;
+    var wasPromoted = !!(existing && existing.autoPromoted);
+    var doc = {
+      majorProcess: majorProcess, prc: sheet.prc || "", model: sheet.model || "", maker: sheet.maker || "",
+      equipModule: equip, fieldLabel: field, count: count, history: history, suggestedValue: suggestedValue,
+      autoPromoted: wasPromoted || manualCount >= PATTERN_AUTO_PROMOTE_THRESHOLD,
+      firstSeenAt: existing ? existing.firstSeenAt : nowIso(), lastSeenAt: nowIso(),
+    };
+    if (doc.autoPromoted && !wasPromoted) doc.autoPromotedAt = nowIso();
+    return store.upsertQueryPattern(id, doc);
+  }
   function generateAutoQueries() {
     var alreadyTargeted = {};
     state.threads.forEach(function (t) {
@@ -1167,6 +1260,59 @@
       });
     })).then(function (res) { return res.length; });
   }
+  // ---- 자동전환(autoPromoted)된 질의 유형에 대해, 아직 학습된 값과 다른 새 항목을 찾아 시스템이
+  // 스스로 AUTO 질의를 만든다 — 수동질의 등록 화면에서 누가 질의를 올리기를 기다리지 않고, 다음
+  // PJT의 제원표가 업로드/수기입력되는 즉시(maybeGeneratePatternAutoQueries, sheets 변경 시마다
+  // 호출) 반복 패턴을 먼저 찾아낸다는 점이 generateAutoQueries(검증 규칙 기반)와 다르다. ----
+  function generatePatternAutoQueries() {
+    var alreadyTargeted = {};
+    state.threads.forEach(function (t) {
+      if (t.status === "REJECTED") return;
+      (t.targets || []).forEach(function (tg) { alreadyTargeted[tg.sheetCode + "#" + tg.itemIdx + "#" + tg.field] = true; });
+    });
+    var promoted = Object.keys(state.queryPatterns).map(function (id) { return state.queryPatterns[id]; }).filter(function (p) { return p.autoPromoted; });
+    if (!promoted.length) return Promise.resolve(0);
+    var groups = {};
+    Object.keys(state.sheets).forEach(function (code) {
+      var sheet = state.sheets[code];
+      if (!sheetApplied(sheet)) return;
+      (sheet.items || []).forEach(function (it, itemIdx) {
+        var equip = it.설비모듈 || "";
+        promoted.forEach(function (p) {
+          if (p.majorProcess !== sheet.dept) return;
+          if ((sheet.prc || "") !== p.prc || (sheet.model || "") !== p.model || (sheet.maker || "") !== p.maker) return;
+          if (equip !== p.equipModule) return;
+          if (it[p.fieldLabel] == null) return; // 이 항목에 그 필드 자체가 없으면 대상이 아니다
+          var key = code + "#" + itemIdx + "#" + p.fieldLabel;
+          if (alreadyTargeted[key]) return;
+          if (String(it[p.fieldLabel]) === String(p.suggestedValue)) return; // 이미 학습된 값과 같으면 질의할 필요 없음
+          var gKey = [sheet.pjt, sheet.dept, p.fieldLabel, p.suggestedValue, p.prc, p.model, p.maker, equip].join("||");
+          if (!groups[gKey]) {
+            groups[gKey] = {
+              pjt: sheet.pjt, majorProcess: sheet.dept, field: p.fieldLabel, toBe: p.suggestedValue,
+              discipline: CATEGORY_TO_DISCIPLINE[it.category] || null,
+              patternId: p.id,
+              targets: [],
+            };
+          }
+          groups[gKey].targets.push({ sheetCode: code, itemIdx: itemIdx, field: p.fieldLabel });
+        });
+      });
+    });
+    var newGroups = Object.keys(groups).map(function (k) { return groups[k]; });
+    if (!newGroups.length) return Promise.resolve(0);
+    return Promise.all(newGroups.map(function (g) {
+      return store.addThread({
+        queryType: "AUTO", queryNature: "SPEC", pjt: g.pjt, majorProcess: g.majorProcess, discipline: g.discipline, fieldLabel: g.field,
+        asIsValue: null, toBeValue: String(g.toBe), targets: g.targets, status: "OPEN",
+        title: "[자동-학습형] " + g.field + " → '" + g.toBe + "' (반복된 질의 유형, " + g.targets.length + "건)",
+        question: "같은 유형(대공정+PRC+MODEL+MAKER+설비모듈)의 질의가 과거 " + PATTERN_AUTO_PROMOTE_THRESHOLD + "회 이상 반복 처리되어, \"질의 유형\" 탭에 학습된 값으로 시스템이 자동 생성한 질의입니다.",
+        patternId: g.patternId, patternGenerated: true,
+        createdBy: "시스템(질의 유형 학습)", createdAt: nowIso(), updatedAt: nowIso(),
+        assignedOwnerName: pickTechLeadFor(g.majorProcess), messages: [],
+      });
+    })).then(function (res) { return res.length; });
+  }
   function applyValueToSheet(sheetCode, itemIdx, field, newValue, source, threadId) {
     var sheet = state.sheets[sheetCode];
     if (!sheet) return Promise.resolve();
@@ -1221,7 +1367,8 @@
     if (approve) {
       chain = chain.then(function () {
         return Promise.all(t.targets.map(function (tg) {
-          return applyValueToSheet(tg.sheetCode, tg.itemIdx, tg.field, t.toBeValue, "AUTO", threadId);
+          return applyValueToSheet(tg.sheetCode, tg.itemIdx, tg.field, t.toBeValue, "AUTO", threadId)
+            .then(function () { return recordPatternOccurrence(t.majorProcess, tg.sheetCode, tg.itemIdx, tg.field, t.toBeValue, "AUTO", threadId); });
         }));
       });
     }
@@ -1308,10 +1455,15 @@
       chain = chain.then(function () {
         if (t.proposedChanges && t.proposedChanges.length) {
           var tg0 = t.targets[0];
-          return applyMultipleValuesToSheet(tg0.sheetCode, tg0.itemIdx, t.proposedChanges, "MANUAL", threadId);
+          return applyMultipleValuesToSheet(tg0.sheetCode, tg0.itemIdx, t.proposedChanges, "MANUAL", threadId).then(function () {
+            return Promise.all(t.proposedChanges.map(function (ch) {
+              return recordPatternOccurrence(t.majorProcess, tg0.sheetCode, tg0.itemIdx, ch.field, ch.newValue, "MANUAL", threadId);
+            }));
+          });
         }
         return Promise.all(t.targets.map(function (tg) {
-          return applyValueToSheet(tg.sheetCode, tg.itemIdx, tg.field, t.toBeValue, "MANUAL", threadId);
+          return applyValueToSheet(tg.sheetCode, tg.itemIdx, tg.field, t.toBeValue, "MANUAL", threadId)
+            .then(function () { return recordPatternOccurrence(t.majorProcess, tg.sheetCode, tg.itemIdx, tg.field, t.toBeValue, "MANUAL", threadId); });
         }));
       });
     }
@@ -1471,6 +1623,7 @@
       groups.push({
         code: code, items: items, majorProcessRaw: majorProcessRaw,
         location: [commonValues["위치"], commonValues["라인"], commonValues["층"]].filter(Boolean).join(" · "),
+        prc: commonValues["PRC"] || "", model: commonValues["MODEL"] || "", maker: commonValues["MAKER"] || "",
       });
     });
     if (!groups.length) throw new Error("건설코드를 하나도 인식하지 못했습니다. '건설코드 대체값'을 입력하거나 시트의 건설코드 열을 확인해 주세요.");
@@ -1595,8 +1748,8 @@
   // 저장소: db 캐패빌리티 있으면 실시간 공유, 없으면 이 브라우저 세션 로컬 저장
   // ===================================================================
   function makeLocalStore() {
-    var owners = [], sheets = {}, threads = [], corrections = [], specEntryRequests = [], guideConfig = null;
-    var listeners = { owners: [], sheets: [], threads: [], corrections: [], specEntryRequests: [], guideConfig: [] };
+    var owners = [], sheets = {}, threads = [], corrections = [], specEntryRequests = [], guideConfig = null, queryPatterns = {};
+    var listeners = { owners: [], sheets: [], threads: [], corrections: [], specEntryRequests: [], guideConfig: [], queryPatterns: [] };
     function notify(key, getter) { listeners[key].forEach(function (cb) { cb(getter()); }); }
     function watch(key, cb, getter) {
       listeners[key].push(cb);
@@ -1607,6 +1760,11 @@
       isLive: false,
       addOwner: function (data) { var doc = Object.assign({ id: uid() }, data); owners.push(doc); notify("owners", function () { return owners.slice(); }); return Promise.resolve(doc.id); },
       setSheet: function (code, doc) { sheets[code] = Object.assign({}, doc, { code: code }); notify("sheets", function () { return Object.assign({}, sheets); }); return Promise.resolve(); },
+      // ---- 버전 이력을 남기지 않는 가벼운 부분 갱신 — PRC/MODEL/MAKER 소급 채움(migrateEquipMeta)처럼
+      // 수천 건에 반복 적용될 수 있는 "메타데이터만 채우는" 패치에 쓴다. setSheet(전체 덮어쓰기 +
+      // saveSheetVersion의 버전 이력 적재)을 쓰면 문서마다 versionHistory가 불필요하게 쌓여 저장소만
+      // 낭비하므로, 있는 필드에 새 필드 몇 개만 덧붙일 때는 항상 이걸 쓴다. ----
+      patchSheetFields: function (code, patch) { if (sheets[code]) Object.assign(sheets[code], patch); notify("sheets", function () { return Object.assign({}, sheets); }); return Promise.resolve(); },
       deleteSheet: function (code) { delete sheets[code]; notify("sheets", function () { return Object.assign({}, sheets); }); return Promise.resolve(); },
       addThread: function (data) { var doc = Object.assign({ id: uid() }, data); threads.push(doc); notify("threads", function () { return threads.slice(); }); return Promise.resolve(doc.id); },
       updateThread: function (id, patch) { var t = threads.filter(function (x) { return x.id === id; })[0]; if (t) Object.assign(t, patch); notify("threads", function () { return threads.slice(); }); return Promise.resolve(); },
@@ -1614,12 +1772,16 @@
       addSpecEntryRequest: function (data) { var doc = Object.assign({ id: uid() }, data); specEntryRequests.push(doc); notify("specEntryRequests", function () { return specEntryRequests.slice(); }); return Promise.resolve(doc.id); },
       updateSpecEntryRequest: function (id, patch) { var r = specEntryRequests.filter(function (x) { return x.id === id; })[0]; if (r) Object.assign(r, patch); notify("specEntryRequests", function () { return specEntryRequests.slice(); }); return Promise.resolve(); },
       setGuideConfig: function (doc) { guideConfig = Object.assign({}, doc); notify("guideConfig", function () { return guideConfig; }); return Promise.resolve(); },
+      // ---- 질의 유형(패턴) DB — 발생마다 새 문서를 쌓지 않고 패턴 키 하나당 문서 하나만 덮어써서
+      // (upsert) 반복 발생 이력을 누적한다(문서 5,000개 한도에 미치는 영향을 최소화하기 위함). ----
+      upsertQueryPattern: function (id, doc) { queryPatterns[id] = Object.assign({}, doc, { id: id }); notify("queryPatterns", function () { return Object.assign({}, queryPatterns); }); return Promise.resolve(); },
       watchOwners: function (cb) { return watch("owners", cb, function () { return owners.slice(); }); },
       watchSheets: function (cb) { return watch("sheets", cb, function () { return Object.assign({}, sheets); }); },
       watchThreads: function (cb) { return watch("threads", cb, function () { return threads.slice(); }); },
       watchCorrections: function (cb) { return watch("corrections", cb, function () { return corrections.slice(); }); },
       watchSpecEntryRequests: function (cb) { return watch("specEntryRequests", cb, function () { return specEntryRequests.slice(); }); },
       watchGuideConfig: function (cb) { return watch("guideConfig", cb, function () { return guideConfig; }); },
+      watchQueryPatterns: function (cb) { return watch("queryPatterns", cb, function () { return Object.assign({}, queryPatterns); }); },
     };
   }
   function makeDbStore(dbNs) {
@@ -1629,6 +1791,7 @@
     var correctionsCol = dbNs.collection("corrections");
     var specEntryRequestsCol = dbNs.collection("spec_entry_requests");
     var guideConfigCol = dbNs.collection("guide_config");
+    var queryPatternsCol = dbNs.collection("query_patterns");
     function watchCollection(col, cb) {
       return col.onSnapshot(function (snap) {
         cb(snap.docs.map(function (d) { return Object.assign({ id: d.id }, d.data()); }));
@@ -1638,6 +1801,7 @@
       isLive: true,
       addOwner: function (data) { return ownersCol.add(data).then(function (ref) { return ref.id; }); },
       setSheet: function (code, doc) { var body = Object.assign({}, doc); delete body.id; return sheetsCol.doc(code).set(body); },
+      patchSheetFields: function (code, patch) { return sheetsCol.doc(code).update(patch); },
       deleteSheet: function (code) { return sheetsCol.doc(code).delete(); },
       addThread: function (data) { return threadsCol.add(data).then(function (ref) { return ref.id; }); },
       updateThread: function (id, patch) { return threadsCol.doc(id).update(patch); },
@@ -1645,6 +1809,7 @@
       addSpecEntryRequest: function (data) { return specEntryRequestsCol.add(data).then(function (ref) { return ref.id; }); },
       updateSpecEntryRequest: function (id, patch) { return specEntryRequestsCol.doc(id).update(patch); },
       setGuideConfig: function (doc) { var body = Object.assign({}, doc); delete body.id; return guideConfigCol.doc("main").set(body); },
+      upsertQueryPattern: function (id, doc) { var body = Object.assign({}, doc); delete body.id; return queryPatternsCol.doc(id).set(body); },
       watchOwners: function (cb) { return watchCollection(ownersCol, cb); },
       watchSheets: function (cb) {
         return watchCollection(sheetsCol, function (docs) {
@@ -1655,6 +1820,11 @@
       watchCorrections: function (cb) { return watchCollection(correctionsCol, cb); },
       watchSpecEntryRequests: function (cb) { return watchCollection(specEntryRequestsCol, cb); },
       watchGuideConfig: function (cb) { return watchCollection(guideConfigCol, function (docs) { cb(docs[0] || null); }); },
+      watchQueryPatterns: function (cb) {
+        return watchCollection(queryPatternsCol, function (docs) {
+          var map = {}; docs.forEach(function (d) { map[d.id] = d; }); cb(map);
+        });
+      },
     };
   }
   // ---- 건설코드별 버전 이력: spec_sheets 문서 안에 ver/versionHistory를 같이 저장해
@@ -1697,6 +1867,25 @@
     }).catch(function () {});
   }
   function ownersColGet() { return db.collection("owners").limit(1).get().then(function (snap) { return snap.empty; }); }
+  // ---- PRC/MODEL/MAKER 소급 채움 — 이미 공유 저장소에 있는(이 배포 이전에 만들어진) 제원표 문서는
+  // 새 필드가 비어 있으므로, sheets가 갱신될 때마다 빠진 문서만 찾아 equipMetaFor(code)로 결정론적
+  // 값을 채운다. saveSheetVersion이 아니라 patchSheetFields(버전 이력 없는 부분 갱신)를 써서 이
+  // 소급 작업 자체가 수천 건의 versionHistory를 새로 만들지 않게 한다(문서 5,000개 한도·저장공간
+  // 절약 지침 — 이번 세션의 항목 생성량 축소와 같은 목적). ----
+  var equipMetaMigrateBusy = false;
+  function migrateEquipMeta() {
+    if (equipMetaMigrateBusy) return;
+    var targets = Object.keys(state.sheets).filter(function (code) {
+      var s = state.sheets[code];
+      return s && s.prc == null && s.model == null && s.maker == null;
+    });
+    if (!targets.length) return;
+    equipMetaMigrateBusy = true;
+    Promise.all(targets.map(function (code) {
+      var meta = equipMetaFor(code);
+      return store.patchSheetFields(code, { prc: meta.prc, model: meta.model, maker: meta.maker });
+    })).catch(function () {}).then(function () { equipMetaMigrateBusy = false; });
+  }
   function sheetsColGet() { return db.collection("spec_sheets").limit(1).get().then(function (snap) { return snap.empty; }); }
 
   // ===================================================================
@@ -1712,6 +1901,7 @@
     { id: "pivot", label: "그래프 만들기", desc: "행/열/값/집계를 골라 제원 데이터를 표와 그래프로 바로 만들어 봅니다." },
     { id: "summary", label: "SUMMARY", desc: "대공정별 제원 총량 집계 요약을 확인합니다." },
     { id: "queries", label: "질의응답", desc: "제원 질의 목록을 확인하고 답변·값 제안·최종확인을 처리합니다." },
+    { id: "queryPatterns", label: "질의 유형", desc: "대공정+PRC/MODEL/MAKER+설비모듈 기준으로 반복되는 질의 유형과 제안값·자동전환 여부를 확인합니다." },
     { id: "manualQuery", label: "수동질의 등록", desc: "설계사가 대공정/건설코드/항목을 직접 골라 새 질의를 등록합니다." },
     { id: "upload", label: "제원표 업로드", desc: "협의된 엑셀 제원표를 업로드해 제원 DB에 자동으로 반영합니다." },
     { id: "specEntry", label: "제원 수기입력", desc: "협의된 양식이 아닌 제원을 기술팀이 입력 요청하고, 건설팀 담당자가 승인해야 DB에 반영됩니다." },
@@ -1930,6 +2120,7 @@
     { id: "s4", num: "②", role: "설계사", title: "MANUAL 질의 등록", desc: "제원표의 특정 항목에 대해 공종 담당 설계사가 직접 서술형으로 질문을 올립니다(제원표 상세의 \"검증 결과\" 탭에서도 등록 가능). PJT·대공정·필드가 함께 기록됩니다." },
     { id: "s5", num: "②→④", role: "기술팀", title: "AS-IS 값 유지 확인 또는 값 제안 (한 번에 결정)", desc: "설계사 질의를 확인한 기술팀이 한 화면에서 바로 결정합니다 — AS-IS 값이 맞으면 \"AS-IS 값 유지 확인\" 버튼 한 번, 값을 고쳐야 하면 \"값 제안\"으로 새 값을 입력합니다. 예전처럼 답변완료·답변승인을 거쳐 다시 판단하는 중간 단계 없이, 어느 쪽이든 곧장 \"값 제안됨\" 상태로 넘어가 설계사 최종확인만 남습니다. 성상명·자재명은 표준 목록 콤보박스에서만 고를 수 있습니다." },
     { id: "s6", num: "⑤→⑥", role: "설계사", title: "최종 확인", desc: "제안된 값이 맞으면 \"최종 확인\"으로 그 자리에서 제원 DB에 반영되고 종결됩니다 — 수정 이력이 남고 해당 건설코드의 버전이 하나 올라갑니다. 값이 틀렸으면 \"재질의\"로 반려해 기술팀이 ④단계로 돌아가 다시 결정하게 합니다(재질의 횟수가 1 늘어납니다)." },
+    { id: "s6b", num: "질의 유형", role: "시스템", title: "질의 유형(패턴) 학습 및 자동전환", desc: "SPEC 질의가 값 반영과 함께 종결될 때마다, \"대공정+PRC+MODEL+MAKER+설비모듈+필드\"를 기준으로 그 값을 \"질의 유형\" 탭의 패턴 DB에 누적합니다. 같은 유형이 수동 질의로 3회 이상 반복 처리되면 \"자동전환\"으로 표시되고, 이후 같은 유형의 새 항목(다음 PJT 등)이 들어오면 설계사가 다시 수동으로 질의를 올리지 않아도 시스템이 학습된 값으로 AUTO 질의(①과 동일한 경로)를 스스로 만듭니다. 아직 자동전환되지 않은 유형도 수동질의 등록·제원 변경 화면에서 과거 이력 기반 제안값을 힌트로 보여줍니다." },
     { id: "s7", num: "분류", role: "시스템", title: "제원 질의 분류 — SPEC / NON_SPEC", desc: "AUTO 질의 생성과 설계사의 MANUAL 질의 등록 모두, 등록 시점에 \"이 질의가 제원 DB(spec_sheets) 값을 바꾸거나(바꿀 수 있거나) 바꿀지 판단하는 내용인가\"를 기준으로 SPEC(제원 관련)과 NON_SPEC(제원과 무관)으로 갈립니다. SPEC 질의는 위 ①~⑥의 기존 흐름을 그대로 따르고, NON_SPEC 질의는 아래 Ⓝ①~Ⓝ③의 별도 흐름을 따릅니다." },
     { id: "s8", num: "Ⓝ①→Ⓝ②", role: "기술팀", title: "제원과 무관한 질의 — 서술형 답변", desc: "값 제안/AS-IS 유지 같은 제원 DB 조작 없이, 질의 내용에 대해 서술형으로 답변만 등록합니다. 답변을 등록하면 곧장 \"답변완료(ANSWERED)\" 상태로 넘어가 설계사 최종검증만 남습니다." },
     { id: "s9", num: "Ⓝ②→Ⓝ③", role: "설계사", title: "최종검증", desc: "기술팀의 서술형 답변을 확인한 뒤, 답변에 이상이 없으면 \"이상 없음\"으로 그 자리에서 종결됩니다(제원 DB는 바뀌지 않습니다). 답변이 미흡하거나 추가 확인이 필요하면 \"재질의\"로 반려해 기술팀이 다시 서술형으로 답변하게 합니다." },
@@ -1995,6 +2186,8 @@
       .reduce(function (a, t) { return a + 1 + (t.narrativeRequeryCount || 0); }, 0);
     var narrativeRequeryTotal = narrative.reduce(function (a, t) { return a + (t.narrativeRequeryCount || 0); }, 0);
     var narrativeResolvedCount = narrative.filter(function (t) { return t.status === "RESOLVED" && t.resolvedVia === "NARRATIVE_OK"; }).length;
+    var patternPromotedCount = Object.keys(state.queryPatterns).filter(function (id) { return state.queryPatterns[id].autoPromoted; }).length;
+    var patternGeneratedCount = auto.filter(function (t) { return t.patternGenerated; }).length;
     return {
       tech: [
         { label: "AUTO 질의 확인 (특이사항 없음)", count: auto.filter(function (t) { return t.status === "RESOLVED"; }).length },
@@ -2002,6 +2195,8 @@
         { label: "AS-IS 값 유지 확인", count: manual.filter(function (t) { return t.initiatedAs === "AS_IS_HOLD"; }).length },
         { label: "제원 변경 값 제안 (재제안 포함)", count: proposeTotal },
         { label: "서술형 답변 (제원 무관 · 재답변 포함)", count: narrativeAnswerTotal },
+        { label: "질의 유형 자동전환됨 (누적 유형 수)", count: patternPromotedCount },
+        { label: "패턴 학습 기반 자동 질의 생성 (\"질의 유형\" 탭)", count: patternGeneratedCount },
       ],
       designer: [
         { label: "MANUAL 질의 등록 (제원)", count: manual.filter(function (t) { return !t.convertedFromId; }).length },
@@ -2705,6 +2900,9 @@
         '<tr class="clickable" data-code="' + esc(s.code) + '">' +
           "<td><a class=\"code-link\" href=\"#\" data-code=\"" + esc(s.code) + "\">" + esc(s.code) + "</a> <span class=\"chip neutral\">v" + (s.ver || 1) + "</span></td>" +
           "<td><span class=\"chip dept\">" + esc(s.dept) + "</span></td>" +
+          "<td class=\"muted\" style=\"font-size:11.5px\">" + esc(s.prc || "") + "</td>" +
+          "<td class=\"muted\" style=\"font-size:11.5px\">" + esc(s.model || "") + "</td>" +
+          "<td class=\"muted\" style=\"font-size:11.5px\">" + esc(s.maker || "") + "</td>" +
           "<td>" + esc(it.category) + "</td>" +
           "<td>" + keyHtml + "</td>" +
           "<td class=\"muted\" style=\"font-size:11.5px\">" + specBits.join(" · ") + "</td>" +
@@ -2736,7 +2934,7 @@
         '<div class="panel">' +
           '<p style="font-size:12px;color:var(--ink-muted);margin:0 0 10px">총 ' + total + "건" + (total > DB_ROW_LIMIT ? " 중 상위 " + DB_ROW_LIMIT + "건만 표시 — 검색/필터로 좁혀 보세요." : "") + "</p>" +
           (tableRows
-            ? '<div style="overflow-x:auto"><table class="sheet-table"><thead><tr><th>건설코드</th><th>대공정</th><th>대분류</th><th>항목명</th><th>주요 값</th><th>설비모듈</th><th>설비대수</th></tr></thead><tbody>' + tableRows + "</tbody></table></div>"
+            ? '<div style="overflow-x:auto"><table class="sheet-table"><thead><tr><th>건설코드</th><th>대공정</th><th>PRC</th><th>MODEL</th><th>MAKER</th><th>대분류</th><th>항목명</th><th>주요 값</th><th>설비모듈</th><th>설비대수</th></tr></thead><tbody>' + tableRows + "</tbody></table></div>"
             : '<div class="empty-state"><div class="big">🗄</div>조건에 맞는 항목이 없습니다.</div>') +
         "</div>" +
       "</div>";
@@ -2752,7 +2950,7 @@
   }
 
   // ---- 제원 DB 엑셀 다운로드 — downloads 캐패빌리티로 뷰어에게 저장을 요청한다 (SheetJS로 .xlsx 생성). ----
-  var DB_EXPORT_HEADERS = ["PJT", "건설코드", "버전", "대공정", "대분류", "항목구분", "항목명"].concat(SPEC_FIELDS, ["설비모듈", "설비대수"]);
+  var DB_EXPORT_HEADERS = ["PJT", "건설코드", "버전", "대공정", "PRC", "MODEL", "MAKER", "대분류", "항목구분", "항목명"].concat(SPEC_FIELDS, ["설비모듈", "설비대수"]);
   var CHANGE_EXPORT_HEADERS = ["PJT", "건설코드", "버전", "대공정", "대분류", "항목명", "필드", "변경 전", "변경 후", "처리유형", "변경자", "변경일시"];
   function pjtFileTag() { return (state.selectedPjt || "전체PJT").replace(/\s+/g, "_"); }
   function todayTag() { return new Date().toISOString().slice(0, 10); }
@@ -2773,7 +2971,7 @@
     scopedSheets.forEach(function (s) {
       (s.items || []).forEach(function (it) {
         var key = itemKeyField(it);
-        var row = [s.pjt || "", s.code, "v" + (s.ver || 1), s.dept, it.category, key.name || "", key.value];
+        var row = [s.pjt || "", s.code, "v" + (s.ver || 1), s.dept, s.prc || "", s.model || "", s.maker || "", it.category, key.name || "", key.value];
         SPEC_FIELDS.forEach(function (f) { row.push(it[f] == null ? "" : it[f]); });
         row.push(it.설비모듈 || "");
         row.push(it.설비대수 != null ? it.설비대수 : 1);
@@ -2811,6 +3009,9 @@
     { key: "keyField", label: "항목명(성상명/전원종류/자재명)" },
     { key: "gcsNature", label: "성질분류(GCS)" },
     { key: "equip", label: "설비모듈" },
+    { key: "maker", label: "MAKER" },
+    { key: "model", label: "MODEL" },
+    { key: "prc", label: "PRC" },
     { key: "code", label: "건설코드" },
   ];
   function pivotDimLabel(key) { var d = PIVOT_DIMENSIONS.filter(function (x) { return x.key === key; })[0]; return d ? d.label : key; }
@@ -2880,7 +3081,10 @@
       (s.items || []).forEach(function (it) {
         var key = itemKeyField(it);
         var nature = GCS_NATURE_MAP[it.category] ? (gcsNatureOf(it.category, key.value) || GCS_NATURE_UNCLASSIFIED) : "";
-        var row = { pjt: s.pjt || "(미지정)", code: s.code, dept: s.dept, category: it.category, keyField: key.value, gcsNature: nature, equip: it.설비모듈 || "(미지정)" };
+        var row = {
+          pjt: s.pjt || "(미지정)", code: s.code, dept: s.dept, category: it.category, keyField: key.value, gcsNature: nature, equip: it.설비모듈 || "(미지정)",
+          maker: s.maker || "(미지정)", model: s.model || "(미지정)", prc: s.prc || "(미지정)",
+        };
         SPEC_FIELDS.forEach(function (f) { row[f] = typeof it[f] === "number" ? it[f] : null; });
         row.__agg__ = itemAggValue(it);
         rows.push(row);
@@ -4088,12 +4292,16 @@
       var control = stdOptions
         ? standardSelectHtml(f, stdOptions, val, "chg-input")
         : '<input class="text chg-input" data-field="' + esc(f) + '" data-orig="' + esc(val) + '" value="' + esc(val) + '">';
+      // 질의 유형(패턴) 힌트 — 같은 유형(대공정+PRC/MODEL/MAKER+설비모듈)에서 이 필드에 반복해서
+      // 쓰인 값이 있으면 참고할 수 있도록 보여준다(강제 적용하지 않고 안내만 한다).
+      var pat = patternFor(t.majorProcess, sheet, item.설비모듈 || "", f);
       return (
         '<div class="field" style="min-width:150px">' +
           '<label class="field-label">' + esc(f) +
             (isPrimary ? ' <span class="chip warn">질의 대상</span>' : "") +
             (stdOptions ? ' <span class="chip neutral" title="표준 목록에서만 고를 수 있습니다">표준값</span>' : "") +
             (info.any ? ' <span class="chip neutral" style="cursor:help;border-bottom:1px dashed var(--warn)" title="' + esc(info.title) + '">수정이력 ' + info.count + "건</span>" : "") +
+            (pat ? ' <span class="chip neutral" style="cursor:help;border-bottom:1px dashed var(--accent)" title="같은 유형(대공정+PRC/MODEL/MAKER+설비모듈)에서 ' + pat.count + '회 반복 · 최다값 \'' + esc(pat.suggestedValue) + '\'">질의 유형 ' + pat.count + "건</span>" : "") +
           "</label>" +
           control +
         "</div>"
@@ -4316,6 +4524,78 @@
   }
 
   // ===================================================================
+  // 질의 유형 — 대공정+PRC/MODEL/MAKER+설비모듈+필드를 기준으로 반복되는 질의 패턴을 한 표로 보여준다.
+  // 발생 건수가 많은 순으로 정렬해 "반복적으로 나오는 질의"가 한눈에 파악되게 하고, 자동전환된
+  // (autoPromoted) 유형은 배지로 구분한다. 이 데이터는 recordPatternOccurrence()가 질의 종결마다
+  // 쌓고, generatePatternAutoQueries()가 자동전환된 유형을 다시 스캔해 새 AUTO 질의를 만든다.
+  // ===================================================================
+  function renderQueryPatternsPage(main) {
+    var q = (state.qpSearch || "").trim().toLowerCase();
+    var patterns = Object.keys(state.queryPatterns).map(function (id) { return state.queryPatterns[id]; })
+      .filter(function (p) { return !state.qpFilterMp || p.majorProcess === state.qpFilterMp; })
+      .filter(function (p) {
+        if (!q) return true;
+        var hay = [p.majorProcess, p.prc, p.model, p.maker, p.equipModule, p.fieldLabel, p.suggestedValue].join(" ").toLowerCase();
+        return hay.indexOf(q) !== -1;
+      })
+      .sort(function (a, b) { return (b.count || 0) - (a.count || 0); });
+    var promotedCount = patterns.filter(function (p) { return p.autoPromoted; }).length;
+    var rows = patterns.map(function (p) {
+      var id = p.id;
+      var expanded = state.qpExpandedId === id;
+      var historyRows = expanded ? (p.history || []).slice().reverse().map(function (h) {
+        return "<tr><td>" + fmtTime(h.at) + "</td><td>" + esc(h.pjt || "") + "</td><td>" + esc(h.sheetCode || "") + "</td><td>" + (h.source === "AUTO" ? "자동 질의" : "수동 질의") + "</td><td class=\"num\">" + esc(h.value) + "</td></tr>";
+      }).join("") : "";
+      return (
+        '<tr class="clickable" data-qp-toggle="' + id + '">' +
+          "<td><span class=\"chip dept\">" + esc(p.majorProcess) + "</span></td>" +
+          "<td class=\"muted\">" + esc(p.prc || "") + "</td>" +
+          "<td class=\"muted\">" + esc(p.model || "") + "</td>" +
+          "<td class=\"muted\">" + esc(p.maker || "") + "</td>" +
+          "<td class=\"muted\">" + esc(p.equipModule || "") + "</td>" +
+          "<td>" + esc(p.fieldLabel || "") + "</td>" +
+          "<td class=\"num\">" + (p.count || 0) + "건</td>" +
+          "<td class=\"num\"><b>" + esc(p.suggestedValue) + "</b></td>" +
+          "<td>" + (p.autoPromoted ? '<span class="chip warn" title="수동 질의로 ' + PATTERN_AUTO_PROMOTE_THRESHOLD + '회 이상 반복 처리되어, 앞으로 같은 유형은 시스템이 스스로 AUTO 질의를 만듭니다">자동전환됨</span>' : '<span class="chip neutral">학습 중</span>') + "</td>" +
+          "<td class=\"muted\" style=\"font-size:11px\">" + fmtTime(p.lastSeenAt) + "</td>" +
+        "</tr>" +
+        (expanded
+          ? '<tr><td colspan="10" style="background:var(--surface-2)"><div style="overflow-x:auto"><table class="corr-table"><thead><tr><th>일시</th><th>PJT</th><th>건설코드</th><th>처리유형</th><th>값</th></tr></thead><tbody>' + historyRows + "</tbody></table></div></td></tr>"
+          : "")
+      );
+    }).join("");
+    main.innerHTML =
+      '<div class="page">' +
+        '<h1 style="font-size:19px;margin-bottom:4px">질의 유형</h1>' +
+        '<p style="font-size:12.5px;color:var(--ink-muted);margin:0 0 16px">대공정 + PRC/MODEL/MAKER + 설비모듈을 "같은 유형의 설비"로 보고, 그 설비의 특정 필드에 대한 질의가 반복되는지 추적합니다. ' +
+          "질의가 실제로 종결(값 반영)될 때마다 쌓이며, 같은 유형이 수동 질의로 <b>" + PATTERN_AUTO_PROMOTE_THRESHOLD + "회 이상</b> 반복 처리되면 \"자동전환됨\"으로 표시되고, 이후 새로 들어오는 같은 유형의 항목은 설계사가 다시 질의를 올리지 않아도 시스템이 스스로 AUTO 질의를 만듭니다. " +
+          "행을 클릭하면 발생 이력을 펼쳐 볼 수 있습니다.</p>" +
+        '<div class="panel"><div class="stat-grid">' +
+          '<div class="stat-tile"><div class="label">전체 질의 유형</div><div class="value">' + patterns.length + "</div></div>" +
+          '<div class="stat-tile"><div class="label">자동전환된 유형</div><div class="value accent">' + promotedCount + "</div></div>" +
+          '<div class="stat-tile"><div class="label">반복 3회 이상(학습 중 포함)</div><div class="value">' + patterns.filter(function (p) { return (p.count || 0) >= PATTERN_AUTO_PROMOTE_THRESHOLD; }).length + "</div></div>" +
+        "</div></div>" +
+        '<div class="panel"><div class="filter-bar">' +
+          '<div class="field"><label class="field-label">대공정</label><select id="qpMp"><option value="">전체</option>' +
+            MAJOR_PROCESSES.map(function (mp) { return '<option value="' + mp + '"' + (state.qpFilterMp === mp ? " selected" : "") + ">" + mp + "</option>"; }).join("") +
+          "</select></div>" +
+          '<div class="field grow"><label class="field-label">검색 (PRC/MODEL/MAKER/설비모듈/필드/제안값)</label><input class="text" id="qpSearch" value="' + esc(state.qpSearch) + '" placeholder="예: AMAT, SCRUBBER, 유량"></div>' +
+        "</div></div>" +
+        '<div class="panel">' +
+          '<p style="font-size:12px;color:var(--ink-muted);margin:0 0 10px">발생 건수가 많은 순으로 정렬됩니다 · 총 ' + patterns.length + "건</p>" +
+          (rows
+            ? '<div style="overflow-x:auto"><table class="sheet-table"><thead><tr><th>대공정</th><th>PRC</th><th>MODEL</th><th>MAKER</th><th>설비모듈</th><th>필드</th><th>발생건수</th><th>제안값</th><th>상태</th><th>최근 발생</th></tr></thead><tbody>' + rows + "</tbody></table></div>"
+            : '<div class="empty-state"><div class="big">🧭</div>아직 쌓인 질의 유형이 없습니다 — 질의가 종결(값 반영)되면 여기 쌓이기 시작합니다.</div>') +
+        "</div>" +
+      "</div>";
+    document.getElementById("qpMp").onchange = function (e) { state.qpFilterMp = e.target.value; render(); };
+    document.getElementById("qpSearch").onchange = function (e) { state.qpSearch = e.target.value; render(); };
+    Array.prototype.forEach.call(main.querySelectorAll("[data-qp-toggle]"), function (el) {
+      el.addEventListener("click", function () { state.qpExpandedId = state.qpExpandedId === el.dataset.qpToggle ? null : el.dataset.qpToggle; render(); });
+    });
+  }
+
+  // ===================================================================
   // 수동질의 등록 (설계사 전용) — 검증 이슈가 없어도 설계사가 먼저 대공정/건설코드/설비모듈/필드를
   // 골라 AS-IS(현재값)/TO-BE(제안값)를 채운 수동(SPEC) 질의를 새로 올릴 수 있게 한다. 대공정·건설코드·
   // 설비모듈은 대상 항목을 명확히 하기 위한 필수값이며, 셋 다 "전체"도 고를 수 있다 — 대공정=전체를
@@ -4420,6 +4700,13 @@
       : stdOptions ? ('<select class="text" id="mqToBe"><option value="">선택하세요</option>' + stdOptions.map(function (o) { return '<option value="' + esc(o) + '">' + esc(o) + "</option>"; }).join("") + "</select>")
       : '<input class="text" id="mqToBe" placeholder="새 값 입력">';
 
+    // ---- 질의 유형(패턴) 힌트 — 단일 항목 대상(대공정+PRC/MODEL/MAKER+설비모듈+필드)에 과거 처리
+    // 이력이 있으면 제안값을 보여준다. 자동전환(autoPromoted)된 유형이면 제출 시 AUTO 질의로
+    // 곧장 전환된다(아래 submitBtn.onclick 참고) — 같은 유형의 질의가 매번 처음부터 설계사→기술팀
+    // 왕복을 거치지 않도록 하기 위함이다. ----
+    var matchedPattern = (!bulkMode && fieldVal && codeVal && codeVal !== MQ_ALL && moduleVal && moduleVal !== MQ_ALL)
+      ? patternFor((state.sheets[codeVal] || {}).dept, state.sheets[codeVal], moduleVal, fieldVal)
+      : null;
     var bulkDepts = bulkMode ? uniqSorted(bulkTargets.map(function (p) { return (state.sheets[p.sheetCode] || {}).dept; })) : [];
     var techName = bulkMode ? (bulkDepts.length === 1 ? pickTechLeadFor(bulkDepts[0]) : null) : (deptVal && deptVal !== MQ_ALL ? pickTechLeadFor(deptVal) : null);
     var defaultDiscipline = (owner.role === "DESIGNER" && (owner.disciplines || [])[0])
@@ -4478,6 +4765,11 @@
                 '<div class="field grow"><label class="field-label">TO-BE (제안값) <span style="color:var(--error)">*필수</span>' + (bulkMode ? " — 대상 " + bulkTargets.length + "건 전체에 동일하게 적용됩니다" : "") + '</label>' + toBeControl + "</div>" +
               "</div>"
             : "") +
+          (matchedPattern
+            ? '<p class="auto-note" style="margin-top:6px">이 유형(대공정+PRC/MODEL/MAKER+설비모듈)의 질의 이력 <b>' + matchedPattern.count + "건</b> — 가장 많이 쓰인 값 <b>'" + esc(matchedPattern.suggestedValue) + "'</b>" +
+                (matchedPattern.autoPromoted ? ' · <span class="chip warn">자동전환 대상 — 등록 즉시 AUTO 질의로 전환되어 기술팀 확인 한 번만 남습니다</span>' : "") +
+                ' <button type="button" class="btn small" id="mqApplySuggested">제안값 적용</button></p>'
+            : "") +
           (fieldVal
             ? '<div class="filter-bar" style="margin-top:10px">' +
                 '<div class="field"><label class="field-label">공종</label><select id="mqDiscipline">' +
@@ -4507,6 +4799,11 @@
     if (itemSel) itemSel.onchange = function (e) { form.itemKey = e.target.value; form.field = ""; render(); };
     var fieldSel = document.getElementById("mqField");
     if (fieldSel) fieldSel.onchange = function (e) { form.field = e.target.value; render(); };
+    var applySuggestedBtn = document.getElementById("mqApplySuggested");
+    if (applySuggestedBtn) applySuggestedBtn.onclick = function () {
+      var el = document.getElementById("mqToBe");
+      if (el && matchedPattern) el.value = matchedPattern.suggestedValue;
+    };
 
     var submitBtn = document.getElementById("mqSubmitBtn");
     if (submitBtn) submitBtn.onclick = function () {
@@ -4540,17 +4837,26 @@
       var reasonVal = (document.getElementById("mqReason").value || "").trim();
       var effDept = bulkMode ? bulkDepts[0] : deptVal;
       var asIsForThread = bulkMode ? (targets.length + "건 (현재값 다양)") : asIsDisplay;
-      var title = bulkMode
+      // 이 유형(대공정+PRC/MODEL/MAKER+설비모듈+필드)이 이미 자동전환(autoPromoted)된 패턴이면,
+      // 설계사가 매번 수동 질의를 새로 올리지 않아도 되도록 등록 즉시 AUTO 질의로 만든다 — 기술팀은
+      // 값 제안 단계 없이 확인 한 번(또는 값 제안)만 하면 되고, 설계사 최종확인도 그대로 거친다.
+      var autoPromote = !bulkMode && matchedPattern && matchedPattern.autoPromoted;
+      var title = autoPromote
+        ? "[자동전환-학습형] " + fieldVal + " '" + asIsDisplay + "' → '" + toBeRaw + "' (" + codeVal + ")"
+        : bulkMode
         ? "[설계사 제안·일괄] " + fieldVal + " → '" + toBeRaw + "' (" + targets.length + "건)"
         : "[설계사 제안] " + fieldVal + " '" + asIsDisplay + "' → '" + toBeRaw + "' (" + codeVal + ")";
 
       submitBtn.disabled = true;
       store.addThread({
-        queryType: "MANUAL", queryNature: "SPEC", pjt: (state.sheets[targets[0].sheetCode] || {}).pjt, majorProcess: effDept, discipline: disciplineVal, fieldLabel: fieldVal,
+        queryType: autoPromote ? "AUTO" : "MANUAL", queryNature: "SPEC", pjt: (state.sheets[targets[0].sheetCode] || {}).pjt, majorProcess: effDept, discipline: disciplineVal, fieldLabel: fieldVal,
         asIsValue: asIsForThread, toBeValue: String(toBeRaw),
         targets: targets, status: "OPEN",
         title: title,
-        question: reasonVal || "설계사가 직접 등록한 수동 질의입니다. AS-IS/TO-BE를 확인해 주세요.",
+        patternId: autoPromote ? matchedPattern.id : null,
+        question: autoPromote
+          ? "같은 유형의 질의가 과거 " + matchedPattern.count + "회 반복 처리되어(\"질의 유형\" 탭 참고) 자동전환 대상으로 판단, AUTO 질의로 등록되었습니다."
+          : (reasonVal || "설계사가 직접 등록한 수동 질의입니다. AS-IS/TO-BE를 확인해 주세요."),
         createdBy: owner.name, createdAt: nowIso(), updatedAt: nowIso(),
         assignedOwnerName: pickTechLeadFor(effDept),
         messages: allWarnings.length ? [{ authorName: owner.name, role: "COMMENT", content: "제안값이 검증 경고를 포함합니다: " + allWarnings.join("; "), at: nowIso() }] : [],
@@ -4693,6 +4999,9 @@
           title: (prevSheet && prevSheet.title) || (g.dept + " " + g.code),
           location: g.location || (prevSheet && prevSheet.location) || "",
           pjt: pjtVal || (prevSheet && prevSheet.pjt) || "",
+          prc: g.prc || (prevSheet && prevSheet.prc) || "",
+          model: g.model || (prevSheet && prevSheet.model) || "",
+          maker: g.maker || (prevSheet && prevSheet.maker) || "",
           items: merge.items, uploadedBy: owner ? owner.name : "관리자", uploadedAt: nowIso(),
           applied: true, // 잘못 올려 미적용으로 돌려둔 건설코드를 올바른 내용으로 재업로드하면 자동으로 다시 적용 상태가 된다
         };
@@ -5219,6 +5528,11 @@
                 '<div class="field grow"><label class="field-label">제목</label><input class="text" id="seNewTitle" placeholder="예: ' + esc(deptVal || "") + ' 장비 제원표" value="' + esc(form.newTitle) + '"></div>' +
                 '<div class="field grow"><label class="field-label">위치</label><input class="text" id="seNewLocation" placeholder="예: 평택 · P5 ph1 · 3F" value="' + esc(form.newLocation) + '"></div>' +
               "</div>" +
+              '<div class="filter-bar" style="margin-top:8px">' +
+                '<div class="field"><label class="field-label">PRC</label><input class="text" id="seNewPrc" placeholder="예: 8421" value="' + esc(form.newPrc) + '"></div>' +
+                '<div class="field"><label class="field-label">MODEL</label><input class="text" id="seNewModel" placeholder="예: PRO-XP" value="' + esc(form.newModel) + '"></div>' +
+                '<div class="field"><label class="field-label">MAKER</label><input class="text" id="seNewMaker" placeholder="예: AMAT" value="' + esc(form.newMaker) + '"></div>' +
+              "</div>" +
               (!isDirect ? '<p class="auto-note" style="margin-top:8px">새 건설코드는 첫 항목 추가 요청이 승인되어야 실제로 만들어집니다.</p>' : "")
             : "") +
           '<div id="seError"></div>' +
@@ -5252,7 +5566,7 @@
         renderSpecEntryRequestsSection(owner) +
       "</div>";
 
-    function resetNewCodeFields() { form.newCodeValue = ""; form.newPjt = ""; form.newTitle = ""; form.newLocation = ""; }
+    function resetNewCodeFields() { form.newCodeValue = ""; form.newPjt = ""; form.newTitle = ""; form.newLocation = ""; form.newPrc = ""; form.newModel = ""; form.newMaker = ""; }
     document.getElementById("seDept").onchange = function (e) { form.dept = e.target.value; form.code = ""; form.codeSearch = ""; form.isNewCode = false; form.category = ""; resetNewCodeFields(); render(); };
     // 다른 탭의 검색창(dbSearch/qSearch)과 같은 방식 — 입력마다 다시 그리면(oninput) 매 키 입력마다
     // 포커스를 잃을 수 있어, 입력을 마치고 벗어나거나 Enter를 누르면(change) 목록을 좁힌다.
@@ -5275,6 +5589,12 @@
     if (newTitleEl) newTitleEl.oninput = function (e) { form.newTitle = e.target.value; };
     var newLocationEl = document.getElementById("seNewLocation");
     if (newLocationEl) newLocationEl.oninput = function (e) { form.newLocation = e.target.value; };
+    var newPrcEl = document.getElementById("seNewPrc");
+    if (newPrcEl) newPrcEl.oninput = function (e) { form.newPrc = e.target.value; };
+    var newModelEl = document.getElementById("seNewModel");
+    if (newModelEl) newModelEl.oninput = function (e) { form.newModel = e.target.value; };
+    var newMakerEl = document.getElementById("seNewMaker");
+    if (newMakerEl) newMakerEl.oninput = function (e) { form.newMaker = e.target.value; };
 
     wireSpecEntryEvents(main, deptVal, codeVal, form, sheet, owner, isDirect);
   }
@@ -5339,6 +5659,9 @@
           title: (document.getElementById("seNewTitle").value || "").trim() || (deptVal + " " + newCodeVal),
           location: (document.getElementById("seNewLocation").value || "").trim(),
           pjt: document.getElementById("seNewPjt").value, items: [],
+          prc: (document.getElementById("seNewPrc").value || "").trim(),
+          model: (document.getElementById("seNewModel").value || "").trim(),
+          maker: (document.getElementById("seNewMaker").value || "").trim(),
         };
       } else {
         if (!codeVal) { errEl.innerHTML = '<p class="error-text">건설코드를 선택해 주세요.</p>'; return; }
@@ -5463,6 +5786,7 @@
         '<div class="panel" style="padding:0"><div class="rail-head"><div class="rail-head-row"><h2>제원표</h2></div></div><div class="rail-list">' + railHtml + "</div></div>" +
         '<div class="panel" style="padding:0">' +
           '<div class="workspace-head"><div><h1>' + esc(sheet.title || code) + "</h1><div class=\"meta\"><span class=\"num\">" + code + '</span><span class="chip neutral">v' + (sheet.ver || 1) + '</span>' + (sheet.pjt ? '<span class="sep">·</span><span class="chip type-AUTO">' + esc(sheet.pjt) + "</span>" : "") + '<span class="sep">·</span><span>' + esc(sheet.location || "") + '</span><span class="sep">·</span><span class="chip dept">' + esc(sheet.dept) + "</span>" +
+            ((sheet.prc || sheet.model || sheet.maker) ? '<span class="sep">·</span><span class="chip neutral" title="PRC/MODEL/MAKER">' + esc([sheet.prc, sheet.model, sheet.maker].filter(Boolean).join(" · ")) + "</span>" : "") +
             (errorCount ? '<span class="chip error">OVER ' + errorCount + "건</span>" : '<span class="chip ok">기준 이내</span>') +
             (sheetApplied(sheet) ? "" : ' <span class="chip warn" title="관리자가 \'제원표 업로드\' 탭에서 미적용으로 전환해, 대시보드·제원 DB·집계·질의 등 다른 모든 화면에서 제외되어 있습니다">미적용</span>') +
             "</div></div></div>" +
@@ -5682,13 +6006,22 @@
     gcsNatureGenBusy = true;
     generateGcsNatureQueries().catch(function () {}).then(function () { gcsNatureGenBusy = false; });
   }
+  // 질의 유형(패턴)이 자동전환된 뒤, sheets가 바뀔 때마다(업로드/수기입력/자동 반영 등) 그 유형과
+  // 일치하는 새 항목이 있는지 다시 확인한다 — GCS 성질분류 질의와 같은 이유로 겹쳐 불리는 것만 막는다.
+  var patternAutoGenBusy = false;
+  function maybeGeneratePatternAutoQueries() {
+    if (patternAutoGenBusy) return;
+    patternAutoGenBusy = true;
+    generatePatternAutoQueries().catch(function () {}).then(function () { patternAutoGenBusy = false; });
+  }
   var unsubs = [];
   function subscribeAll() {
     unsubs.forEach(function (u) { u(); });
     unsubs = [
       store.watchOwners(function (docs) { state.owners = docs; render(); }),
-      store.watchSheets(function (map) { state.sheets = map; render(); maybeGenerateGcsNatureQueries(); }),
+      store.watchSheets(function (map) { state.sheets = map; render(); maybeGenerateGcsNatureQueries(); migrateEquipMeta(); maybeGeneratePatternAutoQueries(); }),
       store.watchThreads(function (docs) { state.threads = docs; render(); }),
+      store.watchQueryPatterns(function (map) { state.queryPatterns = map; render(); maybeGeneratePatternAutoQueries(); }),
       store.watchCorrections(function (docs) { state.corrections = docs; render(); }),
       store.watchSpecEntryRequests(function (docs) { state.specEntryRequests = docs; render(); }),
       store.watchGuideConfig(function (doc) { state.guideConfig = doc; render(); }),
@@ -5720,6 +6053,7 @@
     else if (state.page === "pivot") renderPivotPage(main);
     else if (state.page === "summary") renderSummaryPage(main);
     else if (state.page === "queries") renderQueriesPage(main);
+    else if (state.page === "queryPatterns") renderQueryPatternsPage(main);
     else if (state.page === "manualQuery") renderManualQueryPage(main);
     else if (state.page === "upload") renderUploadPage(main);
     else if (state.page === "specEntry") renderSpecEntryPage(main);
