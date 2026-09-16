@@ -1,0 +1,72 @@
+{
+  "scope": "Top-level text boxes, native charts and tables. Native connectors and intentional text inside native shapes are excluded from pair checks. Visual review remains necessary.",
+  "slides": [
+    {
+      "slide": 1,
+      "checkedObjects": 6
+    },
+    {
+      "slide": 2,
+      "checkedObjects": 5
+    },
+    {
+      "slide": 3,
+      "checkedObjects": 5
+    },
+    {
+      "slide": 4,
+      "checkedObjects": 13
+    },
+    {
+      "slide": 5,
+      "checkedObjects": 5
+    },
+    {
+      "slide": 6,
+      "checkedObjects": 5
+    },
+    {
+      "slide": 7,
+      "checkedObjects": 5
+    },
+    {
+      "slide": 8,
+      "checkedObjects": 5
+    },
+    {
+      "slide": 9,
+      "checkedObjects": 12
+    },
+    {
+      "slide": 10,
+      "checkedObjects": 5
+    },
+    {
+      "slide": 11,
+      "checkedObjects": 5
+    },
+    {
+      "slide": 12,
+      "checkedObjects": 5
+    },
+    {
+      "slide": 13,
+      "checkedObjects": 11
+    },
+    {
+      "slide": 14,
+      "checkedObjects": 17
+    },
+    {
+      "slide": 15,
+      "checkedObjects": 4
+    },
+    {
+      "slide": 16,
+      "checkedObjects": 16
+    }
+  ],
+  "unexpectedOverlaps": [],
+  "outOfBounds": [],
+  "passed": true
+}

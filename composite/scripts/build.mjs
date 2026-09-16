@@ -1,0 +1,15 @@
+import {build} from 'esbuild';
+import {mkdir,readdir,copyFile,cp,writeFile,readFile} from 'node:fs/promises';
+import path from 'node:path';
+import {createHash} from 'node:crypto';
+const root=path.resolve(import.meta.dirname,'..'),dist=path.join(root,'dist');
+await mkdir(path.join(dist,'client/vendor'),{recursive:true});await mkdir(path.join(dist,'server'),{recursive:true});await mkdir(path.join(dist,'.openai'),{recursive:true});
+for(const entry of await readdir(dist,{withFileTypes:true}))if(entry.isFile()&&entry.name!=='dwg-parser-worker.mjs')await copyFile(path.join(dist,entry.name),path.join(dist,'client',entry.name));
+await build({entryPoints:[path.join(dist,'dwg-parser-worker.mjs')],outfile:path.join(dist,'client/dwg-parser-worker.mjs'),bundle:true,format:'esm',platform:'browser',target:'es2022',external:['node:*','module','fs','path','url'],logLevel:'warning'});
+await copyFile(path.join(root,'node_modules/@mlightcad/libredwg-web/wasm/libredwg-web.wasm'),path.join(dist,'client/vendor/libredwg-web.wasm'));
+await build({entryPoints:[path.join(root,'server/worker.mjs')],outfile:path.join(dist,'server/index.js'),bundle:true,format:'esm',platform:'browser',target:'es2022'});
+await copyFile(path.join(root,'.openai/hosting.json'),path.join(dist,'.openai/hosting.json'));await cp(path.join(root,'drizzle'),path.join(dist,'.openai/drizzle'),{recursive:true});
+await writeFile(path.join(dist,'server/wrangler.json'),JSON.stringify({name:'composite-fab',main:'index.js',compatibility_date:'2026-05-15',assets:{directory:'../client',binding:'ASSETS'},d1_databases:[{binding:'DB',database_name:'composite-local',database_id:'00000000-0000-4000-8000-000000000000'}],r2_buckets:[{binding:'BUCKET',bucket_name:'composite-local'}]},null,2));
+const sourceUrl='https://codeload.github.com/mlightcad/libredwg-web/tar.gz/5909bd2bb87fa1168838e1295188f3ee603618eb',sourceHash='821f1f42101a4605b320469e407f0b0c1a880235865a2e7a87c368af98f92fa2';
+await mkdir(path.join(root,'.sites-runtime'),{recursive:true});const cache=path.join(root,'.sites-runtime/libredwg-web-source.tar.gz');let source;try{source=await readFile(cache);}catch{const response=await fetch(sourceUrl);if(!response.ok)throw new Error('DWG engine corresponding source download failed');source=Buffer.from(await response.arrayBuffer());}if(createHash('sha256').update(source).digest('hex')!==sourceHash)throw new Error('DWG engine source checksum mismatch');await writeFile(cache,source);await writeFile(path.join(dist,'client/vendor/libredwg-web-source.tar.gz'),source);
+console.log('PASS: Worker, browser parser, static assets and D1 migrations built.');

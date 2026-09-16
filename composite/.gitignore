@@ -1,0 +1,8 @@
+.sites-runtime/
+*.zip
+node_modules/
+docs/presentation/.build/
+dist/client/
+dist/server/
+dist/.openai/
+.local-data/

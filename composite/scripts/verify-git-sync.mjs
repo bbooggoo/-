@@ -1,0 +1,10 @@
+import {spawnSync} from 'node:child_process';
+import path from 'node:path';
+const root=path.resolve(import.meta.dirname,'..');
+const git=args=>{const r=spawnSync('git',args,{cwd:root,encoding:'utf8'});if(r.error)throw r.error;if(r.status!==0)throw new Error(r.stderr||'Git command failed');return r.stdout.trim();};
+if(git(['status','--porcelain']))throw new Error('Uncommitted changes remain. Commit tested source and documents before release.');
+const head=git(['rev-parse','--verify','HEAD']);
+const auth=process.env.COMPOSITE_GIT_TOKEN?['-c',`http.extraHeader=Authorization: Bearer ${process.env.COMPOSITE_GIT_TOKEN}`]:[];
+const remote=git([...auth,'ls-remote','origin','refs/heads/main']).split(/\s+/)[0];
+if(remote!==head)throw new Error('Remote main differs from local HEAD. Push the tested commit before deploying.');
+console.log(`PASS: clean checkout and remote main match ${head}`);

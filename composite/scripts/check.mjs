@@ -1,0 +1,13 @@
+import {spawnSync} from 'node:child_process';
+import {readdir,access} from 'node:fs/promises';
+import path from 'node:path';
+const root=path.resolve(import.meta.dirname,'..');
+const run=args=>{const result=spawnSync(process.execPath,args,{cwd:root,stdio:'inherit'});if(result.error)throw result.error;if(result.status!==0)process.exit(result.status??1);};
+for(const file of await readdir(path.join(root,'dist')))if(file.endsWith('.mjs'))run(['--check',`dist/${file}`]);
+run(['scripts/build.mjs']);
+for(const file of ['server/worker.mjs','scripts/build.mjs','scripts/dev.mjs'])run(['--check',file]);
+const tests=(await readdir(path.join(root,'tests'))).filter(n=>n.endsWith('.test.mjs')).map(n=>`tests/${n}`);
+run(['--test',...tests]);
+for(const file of ['AGENTS.md','README.md','dist/index.html','dist/style.css','dist/workflow.mjs','dist/composite.css','dist/research.mjs','docs/RESEARCH.md','docs/COMPOSITE_Platform_Introduction.pptx','docs/presentation/build-deck.mjs','docs/VALIDATION.md'])await access(path.join(root,file));
+console.log('PASS: source syntax, automated tests, and required project documents.');
+console.log('Browser behavior and slide visual checks must also be recorded in docs/VALIDATION.md.');

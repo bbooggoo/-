@@ -1,0 +1,71 @@
+{
+  "equipment": {
+    "equipment": 8,
+    "before": 6,
+    "after": 0,
+    "moved": 4
+  },
+  "composite": {
+    "count": 6,
+    "before": 8,
+    "movement": {
+      "moved": 4,
+      "movement": 4.704987562112089,
+      "connection": 98.2,
+      "issues": 0
+    },
+    "connection": {
+      "moved": 5,
+      "movement": 55.46897740461549,
+      "connection": 29.9,
+      "issues": 0
+    },
+    "ut": [
+      {
+        "id": "UPW-A",
+        "kind": "pipe",
+        "x": 0,
+        "y": 6,
+        "z": 4,
+        "capacity": 100,
+        "unit": "L/min",
+        "used": 55,
+        "remaining": 45,
+        "objects": [
+          "PIPE-01",
+          "PIPE-02"
+        ]
+      },
+      {
+        "id": "EXH-A",
+        "kind": "duct",
+        "x": 30,
+        "y": 36,
+        "z": 5.5,
+        "capacity": 500,
+        "unit": "m³/min",
+        "used": 360,
+        "remaining": 140,
+        "objects": [
+          "DUCT-01",
+          "DUCT-02"
+        ]
+      },
+      {
+        "id": "POWER-A",
+        "kind": "tray",
+        "x": 60,
+        "y": 18,
+        "z": 7,
+        "capacity": 120,
+        "unit": "kW",
+        "used": 90,
+        "remaining": 30,
+        "objects": [
+          "TRAY-01",
+          "TRAY-02"
+        ]
+      }
+    ]
+  }
+}

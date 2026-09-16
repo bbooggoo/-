@@ -1,0 +1,22 @@
+{
+  "name": "composite-fab-platform",
+  "version": "0.4.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.19.0",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "dev": "node scripts/dev.mjs",
+    "test": "node scripts/check.mjs",
+    "db:generate": "drizzle-kit generate"
+  },
+  "dependencies": {
+    "@mlightcad/libredwg-web": "0.7.10"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "drizzle-kit": "0.31.10",
+    "drizzle-orm": "0.45.2",
+    "miniflare": "4.20260515.0"
+  }
+}
